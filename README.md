@@ -349,19 +349,6 @@ VMD 以 30 fps 计时，播放时按 `dt * 30 * 速度` 推进帧号，循环用
 - 文件对话框封装为 Windows 专用；Linux 下通过命令行参数或拖放打开文件。
 - IK 限位按欧拉逐轴钳制；接近 ±90° 时用分支滞回保持连续。
 
-## Code signing policy
-
-（代码签名政策）本项目的 Windows 发布产物由 GitHub Actions 从本仓库源码构建，并通过 [SignPath.io](https://signpath.io/) 的免费开源签名服务签名，证书由 [SignPath Foundation](https://signpath.org/) 颁发。
-
-- **签名范围**：仅签名 `github.com/shuyan-k/PmxStudio` 的 `main` 分支与 `v*` 标签触发的 GitHub Actions 构建产物；开发者本地构建的文件不签名。
-- **实现**：[build.yml](.github/workflows/build.yml) 在标签构建里上传未签名 exe → 调用 `signpath/github-action-submit-signing-request@v1` 提交签名请求 → 用签名后的 exe 替换发布产物并重算 sha256。需要的仓库 Secrets：`SIGNPATH_API_TOKEN`、`SIGNPATH_ORGANIZATION_ID`、`SIGNPATH_PROJECT_SLUG`、`SIGNPATH_SIGNING_POLICY_SLUG`、`SIGNPATH_ARTIFACT_CONFIGURATION_SLUG`；未配置时签名步骤自动跳过，不影响普通构建。
-- **发布产物**：`PmxStudio.exe`、`PmxStudio.exe.sha256`、`BUILD_INFO.txt`，随 GitHub Release 一同发布。
-- **提交者 / 审核者**：shuyan-k（仓库维护者）。
-- **审批流程**：每次发版由维护者在 SignPath 后台发起签名请求并确认，使用项目的 release signing policy，只对上述 CI 产物签名。
-- **隐私**：本程序不会向其他联网系统传输任何信息，除非用户或安装、操作本程序的人明确请求。
-
-Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Only artifacts built by GitHub Actions from this repository's `main` branch and `v*` tags are signed; locally built binaries are never signed. Approvers: shuyan-k. This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
-
 ## 许可
 
 [GNU General Public License v3.0](LICENSE)。第三方组件许可见各自目录（[third_party](third_party) 下的 `LICENSE*`）。
