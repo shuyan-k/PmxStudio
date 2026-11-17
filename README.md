@@ -349,6 +349,12 @@ VMD 以 30 fps 计时，播放时按 `dt * 30 * 速度` 推进帧号，循环用
 - 文件对话框封装为 Windows 专用；Linux 下通过命令行参数或拖放打开文件。
 - IK 限位按欧拉逐轴钳制；接近 ±90° 时用分支滞回保持连续。
 
+## 路线图
+
+2.0 计划把「查看 / 微调」延伸为完整出片流程：时间线关键帧与相机轨编辑、确定性物理烘焙、
+离屏渲染与序列帧 / FFmpeg 输出、WAV 音频对轴，以及无 GL 的批处理 CLI。详见
+[docs/ROADMAP_2.0.md](docs/ROADMAP_2.0.md)（分支 `PmxStudio2.0`）。
+
 ## 许可
 
 [GNU General Public License v3.0](LICENSE)。第三方组件许可见各自目录（[third_party](third_party) 下的 `LICENSE*`）。
