@@ -101,6 +101,12 @@ struct Viewer {
     // 时间线：预览模式下的关键帧编辑状态。未载入 clip 时退回 motion 播放。
     TimelineState timeline;
 
+    // 场景相机可视化：机位线框 + 取景锥；相机视角从 VMD 相机轨看画面。
+    bool camera_gizmo = true;
+    bool camera_view = false;
+    bool camera_track_before_view = false;
+    pmx::OrbitCamera camera_before_view;
+
     // ---------------------------------------------------------- 输出 / 音频
     struct OutputSettings {
         int width = 1920;
@@ -203,6 +209,10 @@ struct Viewer {
     void update_motion(float dt);
     // 音频跟随动作播放：按 motion_frame / 30 + audio_offset 对齐，暂停时停播。
     void sync_audio();
+    // 当前帧的 VMD 相机轨换算成轨道相机；无相机轨时返回 false。
+    bool timeline_camera_orbit(pmx::OrbitCamera& out) const;
+    // 0 键：进入 / 退出相机视角（保存并恢复原视角）。
+    void toggle_camera_view();
     void apply_motion_frame();
     // 相机轨接管视角：把当前帧的相机关键帧换算成轨道相机参数。
     void apply_timeline_camera();

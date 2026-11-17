@@ -418,6 +418,11 @@ void Viewer::handle_shortcuts() {
         ImGui::IsKeyPressed(ImGuiKey_K, false)) {
         timeline_insert_key(*this);
     }
+    // 0 / 小键盘 0：进入 / 退出相机视角（Blender 的 Numpad 0 习惯）。
+    if (!io.KeyCtrl && !io.KeyShift && !io.KeyAlt &&
+        (ImGui::IsKeyPressed(ImGuiKey_0, false) ||
+         ImGui::IsKeyPressed(ImGuiKey_Keypad0, false)))
+        toggle_camera_view();
     if (ImGui::IsKeyPressed(ImGuiKey_P, false) && !io.KeyCtrl) {
         physics_enabled = !physics_enabled;
         reset_physics();
@@ -686,6 +691,46 @@ void Viewer::draw_ui() {
     const float margin = pmxui::scale(8.0f);
     const float menu_h = ImGui::GetFrameHeight();
     const float status_h = ImGui::GetFrameHeight() + pmxui::scale(4.0f);
+
+    // 相机视角的取景框：按输出宽高比压暗画面外区域（Blender 的 passepartout）。
+    if (camera_view) {
+        ImDrawList* dl = ImGui::GetBackgroundDrawList();
+        const float area_left = viewport->Pos.x;
+        const float area_right = viewport->Pos.x + viewport->Size.x;
+        const float area_top = viewport->Pos.y + menu_h;
+        const float area_bottom = viewport->Pos.y + viewport->Size.y - status_h;
+        const float aspect =
+            output.height > 0 ? static_cast<float>(output.width) /
+                                    static_cast<float>(output.height)
+                              : 16.0f / 9.0f;
+        float frame_w = area_right - area_left;
+        float frame_h = frame_w / std::max(aspect, 0.05f);
+        if (frame_h > area_bottom - area_top) {
+            frame_h = area_bottom - area_top;
+            frame_w = frame_h * aspect;
+        }
+        const ImVec2 lo{(area_left + area_right - frame_w) * 0.5f,
+                        (area_top + area_bottom - frame_h) * 0.5f};
+        const ImVec2 hi{lo.x + frame_w, lo.y + frame_h};
+        const ImU32 mask = ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.62f));
+        dl->AddRectFilled(ImVec2(area_left, area_top), ImVec2(area_right, lo.y), mask);
+        dl->AddRectFilled(ImVec2(area_left, hi.y), ImVec2(area_right, area_bottom), mask);
+        dl->AddRectFilled(ImVec2(area_left, lo.y), ImVec2(lo.x, hi.y), mask);
+        dl->AddRectFilled(ImVec2(hi.x, lo.y), ImVec2(area_right, hi.y), mask);
+        dl->AddRect(lo, hi, ImGui::GetColorU32(ImVec4(0.98f, 0.78f, 0.42f, 0.95f)), 0.0f, 0,
+                    2.0f);
+        // 四角加粗的取景标记。
+        const float tick = std::min(frame_w, frame_h) * 0.06f;
+        const ImU32 corner = ImGui::GetColorU32(ImVec4(1.0f, 0.9f, 0.6f, 1.0f));
+        dl->AddLine(lo, ImVec2(lo.x + tick, lo.y), corner, 3.0f);
+        dl->AddLine(lo, ImVec2(lo.x, lo.y + tick), corner, 3.0f);
+        dl->AddLine(ImVec2(hi.x, lo.y), ImVec2(hi.x - tick, lo.y), corner, 3.0f);
+        dl->AddLine(ImVec2(hi.x, lo.y), ImVec2(hi.x, lo.y + tick), corner, 3.0f);
+        dl->AddLine(ImVec2(lo.x, hi.y), ImVec2(lo.x + tick, hi.y), corner, 3.0f);
+        dl->AddLine(ImVec2(lo.x, hi.y), ImVec2(lo.x, hi.y - tick), corner, 3.0f);
+        dl->AddLine(hi, ImVec2(hi.x - tick, hi.y), corner, 3.0f);
+        dl->AddLine(hi, ImVec2(hi.x, hi.y - tick), corner, 3.0f);
+    }
 
     // ------------------------------------------------------------ 顶部菜单栏
     if (ImGui::BeginMainMenuBar()) {
@@ -1059,6 +1104,23 @@ void Viewer::draw_scene(int fb_w, int fb_h) {
     settings.background = {bg[0], bg[1], bg[2]};
     settings.light_dir = {light[0], light[1], light[2]};
 
+    // 场景相机 gizmo：有相机轨就显示机位线框；从相机轨取景时不再画自己。
+    settings.show_camera = false;
+    settings.camera_valid = false;
+    if (preview_mode && camera_gizmo && !camera_view && !timeline.camera_track) {
+        pmx::OrbitCamera track_cam;
+        if (timeline_camera_orbit(track_cam)) {
+            settings.camera_valid = true;
+            settings.camera_eye = track_cam.eye();
+            settings.camera_target = track_cam.target;
+            settings.camera_fov = track_cam.fov;
+            const int ow = output.width > 0 ? output.width : 1920;
+            const int oh = output.height > 0 ? output.height : 1080;
+            settings.camera_aspect = static_cast<float>(ow) / static_cast<float>(oh);
+            settings.show_camera = true;
+        }
+    }
+
     if (!pose) {
         glClearColor(bg[0], bg[1], bg[2], 1.0f);
         glClear(glc::GL_COLOR_BUFFER_BIT | glc::GL_DEPTH_BUFFER_BIT);
@@ -1230,7 +1292,11 @@ void Viewer::update_motion(float dt) {
         motion_dirty = false;
     }
     timeline.frame = motion_frame;
-    if (pmx::modules().timeline) apply_timeline_camera();
+    if (pmx::modules().timeline) {
+        // 相机视角下相机轨强制接管，避免用户在检查器里取消勾选后视角悬空。
+        if (camera_view) timeline.camera_track = true;
+        apply_timeline_camera();
+    }
     // 循环回绕会把姿态从末帧瞬移到首帧。MMD / Blender 播放时不会重摆刚体，
     // 这里只清速度：重摆会把几十节的袖链瞬间扯断，之后就被甩飞。
     if (jumped) settle_physics();
@@ -1260,27 +1326,58 @@ void Viewer::sync_audio() {
     }
 }
 
-void Viewer::apply_timeline_camera() {
-    if (!timeline.camera_track || !timeline.clip || timeline.clip->camera.empty()) return;
+bool Viewer::timeline_camera_orbit(pmx::OrbitCamera& out) const {
+    if (!timeline.clip || timeline.clip->camera.empty()) return false;
     pmx::AnimCameraKey key;
-    if (!pmx::sample_camera_track(timeline.clip->camera, motion_frame, key)) return;
+    if (!pmx::sample_camera_track(timeline.clip->camera, motion_frame, key)) return false;
     // MMD 相机：注视点 + 欧拉旋转 + 距离；换算成轨道相机的 yaw / pitch。
     const pmx::Quat q = pmx::camera_rot_quat(key.rot);
     const pmx::Vec3 local{0.0f, 0.0f, -key.distance};
     // 用四元数旋转 (0,0,-distance) 得到相对注视点的偏移。
     const pmx::Vec3 u{q.x, q.y, q.z};
     const pmx::Vec3 t = pmx::cross(u, local) * 2.0f;
-    const pmx::Vec3 dir =
-        local + t * q.w + pmx::cross(u, t);
+    const pmx::Vec3 dir = local + t * q.w + pmx::cross(u, t);
     const pmx::Vec3 eye = key.target + dir;
     const pmx::Vec3 offset = eye - key.target;
     const float len = pmx::length(offset);
-    if (len < 1e-4f) return;
-    camera.target = key.target;
-    camera.distance = len;
-    camera.yaw = std::atan2(offset.x, offset.z);
-    camera.pitch = std::asin(std::clamp(offset.y / len, -1.0f, 1.0f));
-    camera.fov = static_cast<float>(key.fov);
+    if (len < 1e-4f) return false;
+    out.target = key.target;
+    out.distance = len;
+    out.yaw = std::atan2(offset.x, offset.z);
+    out.pitch = std::asin(std::clamp(offset.y / len, -1.0f, 1.0f));
+    out.fov = static_cast<float>(key.fov);
+    return true;
+}
+
+void Viewer::apply_timeline_camera() {
+    if (!timeline.camera_track) return;
+    pmx::OrbitCamera orbit;
+    if (timeline_camera_orbit(orbit)) camera = orbit;
+}
+
+void Viewer::toggle_camera_view() {
+    if (!preview_mode) {
+        status = "相机视角只在预览模式使用（Ctrl+M 切换）";
+        return;
+    }
+    if (!camera_view) {
+        pmx::OrbitCamera orbit;
+        if (!timeline_camera_orbit(orbit)) {
+            status = "当前动作没有相机轨，无法进入相机视角";
+            return;
+        }
+        camera_before_view = camera;
+        camera_track_before_view = timeline.camera_track;
+        timeline.camera_track = true;
+        camera_view = true;
+        camera = orbit;
+        status = "相机视角：0 返回自由视角";
+    } else {
+        camera_view = false;
+        timeline.camera_track = camera_track_before_view;
+        camera = camera_before_view;
+        status = "已退出相机视角";
+    }
 }
 
 void on_drop(GLFWwindow* window, int count, const char** paths) {

@@ -676,6 +676,13 @@ void draw_timeline_panel(Viewer& v) {
     ImGui::SameLine();
     ImGui::Checkbox("相机轨", &timeline.camera_track);
     ImGui::SameLine();
+    if (ImGui::Button(v.camera_view ? "退出相机视角 (0)" : "相机视角 (0)"))
+        v.toggle_camera_view();
+    ImGui::SetItemTooltip("按输出宽高比从 VMD 相机轨看画面；0 / 小键盘 0 切换");
+    ImGui::SameLine();
+    ImGui::Checkbox("相机框", &v.camera_gizmo);
+    ImGui::SetItemTooltip("在视口画出相机机位与取景锥");
+    ImGui::SameLine();
     ImGui::Checkbox("自动关键", &timeline.auto_key);
     ImGui::SetItemTooltip("拖动骨骼后自动打帧");
     ImGui::SameLine();

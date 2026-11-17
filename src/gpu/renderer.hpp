@@ -37,6 +37,14 @@ struct RenderSettings {
     float rim = 0.18f;  // 边缘光强度
     Vec3 background{0.13f, 0.14f, 0.16f};
     Vec3 light_dir{0.35f, 0.72f, 0.45f};
+
+    // 场景相机可视化（Blender 风格）：机位线框 + 取景锥。
+    bool show_camera = false;
+    bool camera_valid = false;
+    Vec3 camera_eye{0.0f, 10.0f, 0.0f};
+    Vec3 camera_target{0.0f, 10.0f, 0.0f};
+    float camera_fov = 38.0f;
+    float camera_aspect = 16.0f / 9.0f;
 };
 
 struct Selection {
@@ -126,6 +134,9 @@ private:
     std::vector<std::uint8_t> texture_index_ready_;
 
     OverlayMesh bone_mesh_;       // 每帧重建：八面体（顶点色）
+    OverlayMesh camera_mesh_;     // 每帧重建：场景相机线框（pos3 + color4）
+    GLuint camera_vertex_count_ = 0;
+    std::vector<float> camera_verts_;
     OverlayMesh rigid_box_;       // 模板：单位盒
     OverlayMesh rigid_sphere_;    // 模板：单位球
     OverlayMesh rigid_cylinder_;  // 模板：单位圆柱（胶囊柱段）
@@ -186,6 +197,8 @@ private:
     void build_toon_ramps();
     void rebuild_bone_overlay(const Model& model, Pose& pose, const RenderSettings& settings,
                               const Selection& selection);
+    // 场景相机 gizmo：机身线框 + 前端取景锥，尺寸按到视点距离自适应。
+    void build_camera_gizmo(const RenderSettings& settings, Vec3 view_eye);
     void build_instances(const Model& model, Pose& pose, Physics* physics,
                          const RenderSettings& settings, const Selection& selection);
     Texture& texture_for(const Model& model, int index);

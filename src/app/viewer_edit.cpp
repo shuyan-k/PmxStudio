@@ -183,6 +183,10 @@ void Viewer::set_preview_mode(bool preview) {
         // 时间线只属于预览：收起面板并交还视角，clip 保留以便再切回来继续编辑。
         timeline.enabled = false;
         timeline.camera_track = false;
+        if (camera_view) {
+            camera_view = false;
+            camera = camera_before_view;  // 相机视角下切回编辑时恢复自由视角
+        }
         morph_weights.clear();
         std::fill(morph_values.begin(), morph_values.end(), 0.0f);
         morph_dirty = true;

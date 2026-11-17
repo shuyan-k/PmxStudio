@@ -476,6 +476,7 @@ SceneRenderer::~SceneRenderer() {
     drop(rigid_cylinder_);
     drop(joint_sphere_);
     drop(bone_mesh_);
+    drop(camera_mesh_);
     if (overlay_instance_ssbo_) {
         glDeleteBuffers(1, &overlay_instance_ssbo_);
         overlay_instance_ssbo_ = 0;
@@ -544,6 +545,20 @@ void SceneRenderer::build_templates() {
     glVertexAttribPointer(2, 4, glc::GL_FLOAT, glc::GL_FALSE, stride,
                           reinterpret_cast<const void*>(6 * sizeof(float)));
     glBindVertexArray(0);
+
+    // 相机线框：与网格线相同的 pos3 + color4 布局，每帧重传。
+    glGenVertexArrays(1, &camera_mesh_.vao);
+    glBindVertexArray(camera_mesh_.vao);
+    glGenBuffers(1, &camera_mesh_.vbo);
+    glBindBuffer(glc::GL_ARRAY_BUFFER, camera_mesh_.vbo);
+    glBufferData(glc::GL_ARRAY_BUFFER, 0, nullptr, glc::GL_STREAM_DRAW);
+    const GLsizei line_stride = 7 * sizeof(float);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, glc::GL_FLOAT, glc::GL_FALSE, line_stride, nullptr);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, glc::GL_FLOAT, glc::GL_FALSE, line_stride,
+                          reinterpret_cast<const void*>(3 * sizeof(float)));
+    glBindVertexArray(0);
 }
 
 void SceneRenderer::build_grid() {
@@ -581,6 +596,94 @@ void SceneRenderer::build_grid() {
     glVertexAttribPointer(1, 4, glc::GL_FLOAT, glc::GL_FALSE, stride,
                           reinterpret_cast<const void*>(3 * sizeof(float)));
     glBindVertexArray(0);
+}
+
+void SceneRenderer::build_camera_gizmo(const RenderSettings& settings, Vec3 view_eye) {
+    camera_verts_.clear();
+    camera_vertex_count_ = 0;
+    Vec3 forward = settings.camera_target - settings.camera_eye;
+    if (length(forward) < 1e-4f) return;
+    forward = normalize(forward);
+    Vec3 up{0.0f, 1.0f, 0.0f};
+    if (std::fabs(dot(forward, up)) > 0.999f) up = Vec3(0.0f, 0.0f, 1.0f);
+    const Vec3 right = normalize(cross(forward, up));
+    const Vec3 upv = cross(right, forward);
+
+    // 尺寸跟到视点的距离走，屏幕上大致恒定；远处相机也不会缩成一个点。
+    const float view_dist = std::max(length(settings.camera_eye - view_eye), 0.25f);
+    const float s = clampf(view_dist * 0.085f, 0.12f, 6.0f);
+
+    const Vec4 body_color(0.96f, 0.64f, 0.24f, 1.0f);
+    const Vec4 cone_color(0.98f, 0.78f, 0.42f, 0.85f);
+    const Vec4 frame_color(1.0f, 0.86f, 0.52f, 1.0f);
+
+    auto push = [this](Vec3 p, Vec4 c) {
+        camera_verts_.insert(camera_verts_.end(), {p.x, p.y, p.z, c.x, c.y, c.z, c.w});
+    };
+    auto line = [&push](Vec3 a, Vec3 b, Vec4 c) {
+        push(a, c);
+        push(b, c);
+    };
+
+    const Vec3 eye = settings.camera_eye;
+    // 机身：eye 为中心的小盒子，+f 为镜头方向。
+    const float hw = s * 0.20f;
+    const float hh = s * 0.16f;
+    const float front = s * 0.28f;
+    const float back = -s * 0.26f;
+    Vec3 corners[8];
+    int at = 0;
+    for (int side = 0; side < 2; ++side) {
+        const float z = side == 0 ? back : front;
+        for (int j = 0; j < 4; ++j) {
+            const float sx = (j == 1 || j == 2) ? hw : -hw;
+            const float sy = (j < 2) ? hh : -hh;
+            corners[at++] = eye + right * sx + upv * sy + forward * z;
+        }
+    }
+    const int edges[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
+                              {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+    for (const auto& e : edges) line(corners[e[0]], corners[e[1]], body_color);
+
+    // 镜头：前脸四角收拢到前方一点。
+    const Vec3 lens = eye + forward * (s * 0.55f);
+    for (int j = 4; j < 8; ++j) line(corners[j], lens, body_color);
+
+    // 顶部方向标记：一个小三角，指示相机 up。
+    const Vec3 top = eye + upv * hh + forward * (s * 0.01f);
+    const Vec3 mark_l = top - right * (s * 0.09f);
+    const Vec3 mark_r = top + right * (s * 0.09f);
+    const Vec3 mark_t = top + upv * (s * 0.26f);
+    line(mark_l, mark_r, body_color);
+    line(mark_l, mark_t, body_color);
+    line(mark_r, mark_t, body_color);
+
+    // 取景锥：从镜头到远平面矩形，宽高比与导出画面一致。
+    const float far_d = s * 3.0f;
+    const float tan_half = std::tan(settings.camera_fov * kPi / 360.0f);
+    const float fh = far_d * tan_half;
+    const float fw = fh * std::max(settings.camera_aspect, 0.05f);
+    const Vec3 center = eye + forward * (s * 0.55f + far_d);
+    const Vec3 q[4] = {center - right * fw + upv * fh, center + right * fw + upv * fh,
+                       center + right * fw - upv * fh, center - right * fw - upv * fh};
+    for (int j = 0; j < 4; ++j) {
+        line(lens, q[j], cone_color);
+        line(q[j], q[(j + 1) % 4], frame_color);
+    }
+
+    // 注视点十字，标出相机对准的位置。
+    const Vec3 target = settings.camera_target;
+    const float t = s * 0.12f;
+    line(target - right * t, target + right * t, frame_color);
+    line(target - upv * t, target + upv * t, frame_color);
+    line(target - forward * t, target + forward * t, frame_color);
+
+    camera_vertex_count_ = static_cast<GLuint>(camera_verts_.size() / 7);
+    glBindBuffer(glc::GL_ARRAY_BUFFER, camera_mesh_.vbo);
+    glBufferData(glc::GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(camera_verts_.size() * sizeof(float)),
+                 camera_verts_.data(), glc::GL_STREAM_DRAW);
+    glBindBuffer(glc::GL_ARRAY_BUFFER, 0);
 }
 
 void SceneRenderer::build_toon_ramps() {
@@ -1422,6 +1525,19 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
                 }
                 base_instance += count;
             }
+            glBindVertexArray(0);
+        }
+    }
+
+    // ---- 场景相机线框：最后画，始终可见（与 Blender 的相机对象一致）。
+    if (settings.show_camera && settings.camera_valid) {
+        build_camera_gizmo(settings, eye);
+        if (camera_vertex_count_ > 0) {
+            line_program_.use();
+            line_program_.set_mat4("uMVP", vp);
+            line_program_.set1f("uAlpha", 1.0f);
+            glBindVertexArray(camera_mesh_.vao);
+            glDrawArrays(glc::GL_LINES, 0, static_cast<GLsizei>(camera_vertex_count_));
             glBindVertexArray(0);
         }
     }
