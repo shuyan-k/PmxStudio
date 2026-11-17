@@ -1,5 +1,6 @@
 # 构建产物（CMake / Ninja / VS）
 build/
+build-headless/
 out/
 dist/
 cmake-build-*/
