@@ -1,0 +1,10 @@
+/workspace/build-headless/CMakeFiles/bullet.dir
+/workspace/build-headless/CMakeFiles/pmx_core.dir
+/workspace/build-headless/CMakeFiles/pmx_tests.dir
+/workspace/build-headless/CMakeFiles/pmx_parity_probe.dir
+/workspace/build-headless/CMakeFiles/pmx_tests_anim.dir
+/workspace/build-headless/CMakeFiles/pmx_tests_bake.dir
+/workspace/build-headless/CMakeFiles/pmx_tests_script.dir
+/workspace/build-headless/CMakeFiles/test.dir
+/workspace/build-headless/CMakeFiles/edit_cache.dir
+/workspace/build-headless/CMakeFiles/rebuild_cache.dir

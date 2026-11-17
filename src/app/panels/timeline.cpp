@@ -25,31 +25,33 @@ int g_key = -1;
 int g_axis = 3;
 int g_drag_control = -1;
 
-int track_total(const pmx::AnimClip& clip, TimelineTrackKind kind) {
+int track_total(const Viewer& v, TimelineTrackKind kind) {
+    const pmx::AnimClip* clip = v.timeline.clip.get();
     switch (kind) {
         case TimelineTrackKind::Bone:
-            return static_cast<int>(clip.bones.size());
+            return clip ? static_cast<int>(clip->bones.size()) : 0;
         case TimelineTrackKind::Morph:
-            return static_cast<int>(clip.morphs.size());
+            return clip ? static_cast<int>(clip->morphs.size()) : 0;
         case TimelineTrackKind::Camera:
             return 1;
         case TimelineTrackKind::Ik:
-            return 1;
+            return clip ? 1 : 0;
     }
     return 0;
 }
 
-int track_key_count(const pmx::AnimClip& clip, TimelineTrackKind kind, int track) {
-    if (track < 0 || track >= track_total(clip, kind)) return 0;
+int track_key_count(const Viewer& v, TimelineTrackKind kind, int track) {
+    if (track < 0 || track >= track_total(v, kind)) return 0;
+    const pmx::AnimClip* clip = v.timeline.clip.get();
     switch (kind) {
         case TimelineTrackKind::Bone:
-            return static_cast<int>(clip.bones[track].keys.size());
+            return static_cast<int>(clip->bones[track].keys.size());
         case TimelineTrackKind::Morph:
-            return static_cast<int>(clip.morphs[track].keys.size());
+            return static_cast<int>(clip->morphs[track].keys.size());
         case TimelineTrackKind::Camera:
-            return static_cast<int>(clip.camera.size());
+            return static_cast<int>(v.camera_motion.track.keys.size());
         case TimelineTrackKind::Ik:
-            return static_cast<int>(clip.ik.size());
+            return static_cast<int>(clip->ik.size());
     }
     return 0;
 }
@@ -75,7 +77,7 @@ std::string track_name(const Viewer& v, TimelineTrackKind kind, int track,
             return t.name;
         }
         case TimelineTrackKind::Camera:
-            return "相机轨";
+            return "相机动作";
         case TimelineTrackKind::Ik:
             return "IK 开关轨";
     }
@@ -174,7 +176,7 @@ void draw_morph_tree(Viewer& v, pmx::AnimClip& clip, const std::string& filter) 
     ImGui::TreePop();
 }
 
-void draw_camera_tree(Viewer& v, pmx::AnimClip& clip, const std::string& filter) {
+void draw_camera_tree(Viewer& v, const std::string& filter) {
     if (!ImGui::TreeNodeEx("相机##timeline_tree_camera",
                            ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth))
         return;
@@ -183,9 +185,13 @@ void draw_camera_tree(Viewer& v, pmx::AnimClip& clip, const std::string& filter)
         ImGui::TreePop();
         return;
     }
-    std::string text = "相机轨  (" + std::to_string(clip.camera.size()) + ")";
+    std::string text = "相机动作（独立）  (" +
+                       std::to_string(v.camera_motion.track.keys.size()) + ")";
     track_row(v, TimelineTrackKind::Camera, 0, text);
-    if (clip.camera.empty()) ImGui::TextDisabled("没有相机关键帧");
+    if (v.camera_motion.track.empty()) {
+        ImGui::TextDisabled("没有相机关键帧");
+        ImGui::TextDisabled("在「相机」页导入相机 VMD，或记录当前视角");
+    }
     ImGui::TreePop();
 }
 
@@ -204,11 +210,12 @@ void draw_ik_tree(Viewer& v, pmx::AnimClip& clip, const std::string& filter) {
     ImGui::TreePop();
 }
 
-std::string key_text(const pmx::AnimClip& clip, TimelineTrackKind kind, int track, int key) {
+std::string key_text(const Viewer& v, TimelineTrackKind kind, int track, int key) {
+    const pmx::AnimClip* clip = v.timeline.clip.get();
     char buffer[256];
     switch (kind) {
         case TimelineTrackKind::Bone: {
-            const pmx::AnimBoneKey& k = clip.bones[track].keys[key];
+            const pmx::AnimBoneKey& k = clip->bones[track].keys[key];
             float rx = 0.0f, ry = 0.0f, rz = 0.0f;
             pmx::quat_to_euler(k.rot, rx, ry, rz);
             std::snprintf(buffer, sizeof buffer,
@@ -218,18 +225,18 @@ std::string key_text(const pmx::AnimClip& clip, TimelineTrackKind kind, int trac
             return buffer;
         }
         case TimelineTrackKind::Morph: {
-            const pmx::AnimMorphKey& k = clip.morphs[track].keys[key];
+            const pmx::AnimMorphKey& k = clip->morphs[track].keys[key];
             std::snprintf(buffer, sizeof buffer, "帧 %d · 权重 %.3f", k.frame, k.weight);
             return buffer;
         }
         case TimelineTrackKind::Camera: {
-            const pmx::AnimCameraKey& k = clip.camera[key];
+            const pmx::AnimCameraKey& k = v.camera_motion.track.keys[key];
             std::snprintf(buffer, sizeof buffer, "帧 %d · 距离 %.1f · FOV %d", k.frame,
                           k.distance, k.fov);
             return buffer;
         }
         case TimelineTrackKind::Ik: {
-            const pmx::AnimIkKey& k = clip.ik[key];
+            const pmx::AnimIkKey& k = clip->ik[key];
             std::snprintf(buffer, sizeof buffer, "帧 %d · %d 条链%s", k.frame,
                           static_cast<int>(k.states.size()), k.visible ? "" : "（隐藏）");
             return buffer;
@@ -238,24 +245,28 @@ std::string key_text(const pmx::AnimClip& clip, TimelineTrackKind kind, int trac
     return std::string();
 }
 
-void draw_curve_editor(Viewer& v, pmx::AnimClip& clip) {
+void draw_curve_editor(Viewer& v) {
     ImGui::SeparatorText("曲线");
     if (g_kind == TimelineTrackKind::Morph || g_kind == TimelineTrackKind::Ik) {
         ImGui::TextDisabled("形态 / IK 关键帧为线性插值，没有缓动曲线。");
         return;
     }
     if (g_track < 0 || g_key < 0 ||
-        g_key >= track_key_count(clip, g_kind, g_track)) {
+        g_key >= track_key_count(v, g_kind, g_track)) {
         ImGui::TextDisabled("未选择关键帧（在上方列表点选一帧）");
         return;
     }
 
+    pmx::AnimClip* clip = v.timeline.clip.get();
     pmx::VmdCurve* curve = nullptr;
-    if (g_kind == TimelineTrackKind::Bone)
-        curve = &clip.bones[g_track].keys[g_key].curve[g_axis];
+    if (g_kind == TimelineTrackKind::Bone && clip)
+        curve = &clip->bones[g_track].keys[g_key].curve[g_axis];
     else if (g_kind == TimelineTrackKind::Camera)
-        curve = &clip.camera[g_key].curve[g_axis];
+        curve = &v.camera_motion.track.keys[g_key].curve[g_axis];
     if (!curve) return;
+
+    // 相机关键帧属于独立相机动作，编辑后标相机脏而不是模型动作。
+    const bool camera_curve = g_kind == TimelineTrackKind::Camera;
 
     const char* axes[4] = {"X 轴", "Y 轴", "Z 轴", "旋转"};
     ImGui::SetNextItemWidth(pmxui::scale(110.0f));
@@ -266,7 +277,8 @@ void draw_curve_editor(Viewer& v, pmx::AnimClip& clip) {
         curve->y1 = y1;
         curve->x2 = x2;
         curve->y2 = y2;
-        v.motion_dirty_edit = true;
+        if (camera_curve) v.camera_motion.dirty = true;
+        else v.motion_dirty_edit = true;
     };
     if (ImGui::Button("线性##timeline_curve_linear")) preset(0.0f, 0.0f, 1.0f, 1.0f);
     ImGui::SameLine();
@@ -310,7 +322,8 @@ void draw_curve_editor(Viewer& v, pmx::AnimClip& clip) {
             curve->x2 = nx;
             curve->y2 = ny;
         }
-        v.motion_dirty_edit = true;
+        if (camera_curve) v.camera_motion.dirty = true;
+        else v.motion_dirty_edit = true;
     }
     if (ImGui::IsItemDeactivated()) g_drag_control = -1;
 
@@ -363,28 +376,30 @@ void panel_timeline(Viewer& v) {
         return;
     }
     pmx::AnimClip* clip = v.timeline.clip.get();
-    if (!clip) {
-        ImGui::TextDisabled("尚未载入时间线动作。");
-        ImGui::TextDisabled("导入 VMD 后会自动生成可编辑的关键帧；底部面板可用 Ctrl+T 展开。");
+    if (!clip && !v.camera_motion.loaded()) {
+        ImGui::TextDisabled("尚未载入模型动作或相机动作。");
+        ImGui::TextDisabled("导入 VMD 会自动拆分：骨骼 / 形态进「动作」，相机进独立「相机动作」。");
         return;
     }
 
     ImGui::SetNextItemWidth(-1.0f);
     ImGui::InputTextWithHint("##timeline_filter", "搜索轨道名 / 中文", &v.timeline.filter);
 
-    const int total = track_total(*clip, g_kind);
+    const int total = track_total(v, g_kind);
     if (g_track >= total) {
         g_track = -1;
         g_key = -1;
     }
-    if (g_key >= track_key_count(*clip, g_kind, g_track)) g_key = -1;
+    if (g_key >= track_key_count(v, g_kind, g_track)) g_key = -1;
 
     ImGui::BeginChild("##timeline_panel_tracks", ImVec2(0.0f, pmxui::scale(190.0f)),
                       ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeY);
-    draw_bone_tree(v, *clip, v.timeline.filter);
-    draw_morph_tree(v, *clip, v.timeline.filter);
-    draw_camera_tree(v, *clip, v.timeline.filter);
-    draw_ik_tree(v, *clip, v.timeline.filter);
+    if (clip) {
+        draw_bone_tree(v, *clip, v.timeline.filter);
+        draw_morph_tree(v, *clip, v.timeline.filter);
+    }
+    draw_camera_tree(v, v.timeline.filter);
+    if (clip) draw_ik_tree(v, *clip, v.timeline.filter);
     ImGui::EndChild();
 
     ImGui::SeparatorText("关键帧");
@@ -393,7 +408,7 @@ void panel_timeline(Viewer& v) {
     } else {
         ImGui::TextDisabled("%s · %s", kind_tag(g_kind),
                             display_text(v, g_kind, g_track).c_str());
-        const int keys = track_key_count(*clip, g_kind, g_track);
+        const int keys = track_key_count(v, g_kind, g_track);
         if (keys == 0) {
             ImGui::TextDisabled("这条轨道还没有关键帧。");
         } else {
@@ -401,7 +416,7 @@ void panel_timeline(Viewer& v) {
                               ImGuiChildFlags_Borders);
             for (int k = 0; k < keys; ++k) {
                 ImGui::PushID(k);
-                const std::string text = key_text(*clip, g_kind, g_track, k);
+                const std::string text = key_text(v, g_kind, g_track, k);
                 if (ImGui::Selectable(text.c_str(), g_key == k)) {
                     g_key = k;
                     v.timeline.active_key =
@@ -413,5 +428,5 @@ void panel_timeline(Viewer& v) {
         }
     }
 
-    draw_curve_editor(v, *clip);
+    draw_curve_editor(v);
 }

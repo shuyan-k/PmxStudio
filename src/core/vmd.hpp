@@ -77,10 +77,12 @@ struct VmdMotion {
     std::vector<VmdMorphTrack> morph_tracks;
     // 表示枠 / IK 帧（按帧号升序）。
     std::vector<VmdIkFrame> ik_frames;
-    // 相机轨（按帧号升序）；为空表示动作没有相机数据。
+    // 相机帧（按帧号升序）；为空表示文件里没有相机数据。
     std::vector<VmdCameraKey> camera_track;
     int camera_keys = 0;  // 文件里声明的相机帧数（即使解析失败也保留）
-    int max_frame = 0;
+    int max_frame = 0;    // 文件总长（含相机帧）
+    // 模型动作（骨骼 / 形态 / IK）的长度，不含相机；界面里「动作时长」用这个。
+    int model_max_frame() const;
 
     bool empty() const {
         return bone_tracks.empty() && morph_tracks.empty() && camera_track.empty();

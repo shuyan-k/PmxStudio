@@ -21,6 +21,8 @@ void panel_preview_physics(Viewer& v);
 void panel_preview_morph(Viewer& v);
 // 预览模式的时间线：轨道树、关键帧列表与曲线编辑（实现在 panels/timeline.cpp）。
 void panel_timeline(Viewer& v);
+// 相机：独立于模型动作的相机动作导入 / 保存 / 关键帧与视角控制。
+void panel_camera(Viewer& v);
 // 输出：离屏渲染、序列帧、FFmpeg 编码与音频对轴（panels/output.cpp）。
 void panel_output(Viewer& v);
 // 烘焙：实时物理固化到骨骼轨（panels/bake.cpp）。

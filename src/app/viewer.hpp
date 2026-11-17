@@ -79,7 +79,8 @@ struct Viewer {
     float bg[3] = {0.13f, 0.14f, 0.16f};
     float light[3] = {0.35f, 0.72f, 0.45f};
 
-    // VMD 动作：导入后按 30 fps 时间轴播放；暂停时保留当前帧姿态。
+    // VMD 模型动作（骨骼 / 形态 / IK）：导入后按 30 fps 时间轴播放；暂停时保留当前帧姿态。
+    // 同一文件里的相机帧不放在这里，导入时拆进 camera_motion。
     std::unique_ptr<pmx::VmdMotion> motion;
     pmx::VmdBinding motion_binding;
     float motion_frame = 0.0f;
@@ -95,17 +96,27 @@ struct Viewer {
     // 避免 IK 把被旋转骨骼的原点又拉回去。
     std::unordered_set<int> manual_ik_mutes;
 
-    // 退出前是否有未保存的动作编辑（时间线）。与 dirty（模型数据）分开提示。
+    // 模型动作（骨骼 / 形态 / IK）是否有未保存的编辑；相机动作见 camera_motion.dirty。
     bool motion_dirty_edit = false;
 
     // 时间线：预览模式下的关键帧编辑状态。未载入 clip 时退回 motion 播放。
     TimelineState timeline;
 
-    // 场景相机可视化：机位线框 + 取景锥；相机视角从 VMD 相机轨看画面。
+    // 场景相机可视化：机位线框 + 取景锥；相机视角只看相机动作。
     bool camera_gizmo = true;
     bool camera_view = false;
-    bool camera_track_before_view = false;
     pmx::OrbitCamera camera_before_view;
+
+    // 相机动作：独立于模型动作（timeline.clip）的机位关键帧。
+    // 与模型动作共用播放头，但导入 / 保存 / 清除互不影响。
+    struct CameraMotion {
+        pmx::CameraTrack track;
+        std::string source;
+        bool dirty = false;  // 有未保存的相机编辑（与模型动作的 dirty 分开）
+        bool loaded() const { return !track.empty(); }
+        int max_frame() const { return track.max_frame(); }
+    };
+    CameraMotion camera_motion;
 
     // ---------------------------------------------------------- 输出 / 音频
     struct OutputSettings {
@@ -141,7 +152,7 @@ struct Viewer {
     bool close_requested = false;
     // 保存当前模型；路径为空或 always_ask 时弹文件对话框。取消 / 失败返回 false。
     bool save_model_dialog(bool always_ask);
-    // 保存当前动作（时间线 clip 或导入的 VMD）。成功会清掉 motion_dirty_edit。
+    // 保存模型动作 VMD（骨骼 / 形态，不含相机帧）。成功会清掉 motion_dirty_edit。
     bool save_motion_dialog();
     void draw_close_confirm();
 
@@ -204,18 +215,27 @@ struct Viewer {
 
     bool load_model(const std::string& path, std::string* err);
     bool apply_vpd_file(const std::string& path, std::string* err);
+    // 导入 VMD：文件里的模型动作与相机动作分别落到 timeline / camera_motion。
     bool load_vmd_file(const std::string& path, std::string* err);
+    // 只导入相机动作（不动模型动作），供「相机」页使用。
+    bool load_camera_file(const std::string& path, std::string* err);
     void clear_motion();
+    void clear_camera_motion();
+    // 保存相机动作（只含相机帧的 VMD）。成功会清掉 camera_motion.dirty。
+    bool save_camera_dialog();
     void update_motion(float dt);
     // 音频跟随动作播放：按 motion_frame / 30 + audio_offset 对齐，暂停时停播。
     void sync_audio();
-    // 当前帧的 VMD 相机轨换算成轨道相机；无相机轨时返回 false。
-    bool timeline_camera_orbit(pmx::OrbitCamera& out) const;
+    // 指定帧的相机动作换算成轨道相机；无相机关键帧时返回 false。
+    bool camera_motion_orbit_at(double frame, pmx::OrbitCamera& out) const;
+    bool camera_motion_orbit(pmx::OrbitCamera& out) const {
+        return camera_motion_orbit_at(motion_frame, out);
+    }
     // 0 键：进入 / 退出相机视角（保存并恢复原视角）。
     void toggle_camera_view();
     void apply_motion_frame();
-    // 相机轨接管视角：把当前帧的相机关键帧换算成轨道相机参数。
-    void apply_timeline_camera();
+    // 相机视角下让相机动作接管视角（只在播放头变化时调用，便于手动调整机位后打帧）。
+    void apply_camera_motion();
     // 记住被手动摆过的骨骼：播放时用这里的值覆盖 VMD 轨道。
     void remember_manual_pose(int bone);
     void clear_manual_pose();

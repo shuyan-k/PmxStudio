@@ -72,14 +72,13 @@ bool locate_key(const std::vector<Key>& keys, double frame, std::size_t& lo, std
 }  // namespace
 
 bool AnimClip::empty() const {
-    return bones.empty() && morphs.empty() && camera.empty() && ik.empty();
+    return bones.empty() && morphs.empty() && ik.empty();
 }
 
 int AnimClip::max_frame() const {
     int out = 0;
     for (const AnimBoneTrack& track : bones) out = std::max(out, max_key_frame(track.keys));
     for (const AnimMorphTrack& track : morphs) out = std::max(out, max_key_frame(track.keys));
-    out = std::max(out, max_key_frame(camera));
     out = std::max(out, max_key_frame(ik));
     return out;
 }
@@ -87,8 +86,21 @@ int AnimClip::max_frame() const {
 void AnimClip::sort_keys() {
     for (AnimBoneTrack& track : bones) sort_and_dedupe(track.keys);
     for (AnimMorphTrack& track : morphs) sort_and_dedupe(track.keys);
-    sort_and_dedupe(camera);
     sort_and_dedupe(ik);
+}
+
+// ------------------------------------------------------------------ 相机动作
+
+int CameraTrack::max_frame() const {
+    return max_key_frame(keys);
+}
+
+void CameraTrack::sort_keys() {
+    sort_and_dedupe(keys);
+}
+
+int CameraTrack::set_key(const AnimCameraKey& key) {
+    return set_key_in(keys, key);
 }
 
 int AnimClip::find_bone_track(int bone, const std::string& name) const {
@@ -177,19 +189,6 @@ AnimClip from_vmd(const VmdMotion& motion, const VmdBinding& binding) {
         clip.morphs.push_back(std::move(track));
     }
 
-    clip.camera.reserve(motion.camera_track.size());
-    for (const VmdCameraKey& src : motion.camera_track) {
-        AnimCameraKey dst;
-        dst.frame = src.frame;
-        dst.distance = src.distance;
-        dst.target = src.target;
-        dst.rot = src.rot;
-        dst.curve = src.curve;
-        dst.fov = src.fov;
-        dst.perspective = src.perspective;
-        clip.camera.push_back(dst);
-    }
-
     clip.ik.reserve(motion.ik_frames.size());
     for (std::size_t i = 0; i < motion.ik_frames.size(); ++i) {
         const VmdIkFrame& src = motion.ik_frames[i];
@@ -261,24 +260,6 @@ VmdMotion to_vmd(const AnimClip& clip, const Model* model, const std::string& mo
         motion.morph_tracks.push_back(std::move(track));
     }
 
-    motion.camera_track.reserve(clip.camera.size());
-    for (const AnimCameraKey& src : clip.camera) {
-        VmdCameraKey dst;
-        dst.frame = src.frame;
-        dst.distance = src.distance;
-        dst.target = src.target;
-        dst.rot = src.rot;
-        dst.curve = src.curve;
-        dst.fov = src.fov;
-        dst.perspective = src.perspective;
-        motion.camera_track.push_back(dst);
-    }
-    std::stable_sort(motion.camera_track.begin(), motion.camera_track.end(),
-                     [](const VmdCameraKey& a, const VmdCameraKey& b) {
-                         return a.frame < b.frame;
-                     });
-    motion.camera_keys = static_cast<int>(motion.camera_track.size());
-
     motion.ik_frames.reserve(clip.ik.size());
     for (const AnimIkKey& src : clip.ik) {
         VmdIkFrame frame;
@@ -307,9 +288,53 @@ VmdMotion to_vmd(const AnimClip& clip, const Model* model, const std::string& mo
         max_frame = std::max(max_frame, max_key_frame(track.keys));
     for (const VmdMorphTrack& track : motion.morph_tracks)
         max_frame = std::max(max_frame, max_key_frame(track.keys));
-    max_frame = std::max(max_frame, max_key_frame(motion.camera_track));
     max_frame = std::max(max_frame, max_key_frame(motion.ik_frames));
     motion.max_frame = max_frame;
+    return motion;
+}
+
+CameraTrack camera_track_from_vmd(const VmdMotion& motion) {
+    CameraTrack track;
+    track.keys.reserve(motion.camera_track.size());
+    for (const VmdCameraKey& src : motion.camera_track) {
+        AnimCameraKey dst;
+        dst.frame = src.frame;
+        dst.distance = src.distance;
+        dst.target = src.target;
+        dst.rot = src.rot;
+        dst.curve = src.curve;
+        dst.fov = src.fov;
+        dst.perspective = src.perspective;
+        track.keys.push_back(dst);
+    }
+    track.sort_keys();
+    return track;
+}
+
+VmdMotion to_vmd_camera(const CameraTrack& track) {
+    VmdMotion motion;
+    motion.version = "0002";
+    // 相机 VMD 的头名称字段按 MMD / MMD 系工具的惯例写「カメラ・照明」，
+    // 不沿用某个模型动作的 model_name。
+    motion.model_name = "カメラ・照明";
+    motion.camera_track.reserve(track.keys.size());
+    for (const AnimCameraKey& src : track.keys) {
+        VmdCameraKey dst;
+        dst.frame = src.frame;
+        dst.distance = src.distance;
+        dst.target = src.target;
+        dst.rot = src.rot;
+        dst.curve = src.curve;
+        dst.fov = src.fov;
+        dst.perspective = src.perspective;
+        motion.camera_track.push_back(dst);
+    }
+    std::stable_sort(motion.camera_track.begin(), motion.camera_track.end(),
+                     [](const VmdCameraKey& a, const VmdCameraKey& b) {
+                         return a.frame < b.frame;
+                     });
+    motion.camera_keys = static_cast<int>(motion.camera_track.size());
+    motion.max_frame = max_key_frame(motion.camera_track);
     return motion;
 }
 

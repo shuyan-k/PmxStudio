@@ -33,7 +33,7 @@ void panel_bake(Viewer& v) {
 
     static pmx::BakeOptions options;
     static bool initialized = false;
-    const int last_frame = v.timeline.max_frame();
+    const int last_frame = v.timeline.model_max_frame();
     if (!initialized) {
         options.end_frame = last_frame;
         initialized = true;

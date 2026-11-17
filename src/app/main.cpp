@@ -175,6 +175,9 @@ bool Viewer::load_model(const std::string& path, std::string* err) {
         renderer.update_base(model, vm);
     }
 
+    // 相机动作是独立数据，换模型时保留；但相机视角属于视图状态，
+    // fit_camera 会重设自由视角，这里先退出相机视角，避免取景框残留。
+    camera_view = false;
     fit_camera();  // 相机自动取景
 #ifdef PMX_ENABLE_PHYSICS
     physics.release();
@@ -414,9 +417,14 @@ void Viewer::handle_shortcuts() {
             if (timeline.enabled && !timeline.clip && motion) timeline_sync_from_motion(*this);
         }
     }
-    if (pmx::modules().timeline && preview_mode && !io.KeyCtrl && timeline.enabled &&
+    if (pmx::modules().timeline && preview_mode && !io.KeyCtrl &&
         ImGui::IsKeyPressed(ImGuiKey_K, false)) {
-        timeline_insert_key(*this);
+        // 相机动作独立于时间线面板：相机视角下随时可以打帧。
+        if (camera_view) {
+            timeline_insert_camera_key(*this);
+        } else if (timeline.enabled) {
+            timeline_insert_key(*this);
+        }
     }
     // 0 / 小键盘 0：进入 / 退出相机视角（Blender 的 Numpad 0 习惯）。
     if (!io.KeyCtrl && !io.KeyShift && !io.KeyAlt &&
@@ -629,7 +637,7 @@ void Viewer::draw_ui() {
             error = "尚未加载模型";
             return;
         }
-        const std::string path = pick_open_file(kVmdFilter, L"导入 VMD 动作");
+        const std::string path = pick_open_file(kVmdFilter, L"导入 VMD（动作 / 相机）");
         if (path.empty()) return;
         std::string err;
         if (load_vmd_file(path, &err)) error.clear();
@@ -776,7 +784,7 @@ void Viewer::draw_ui() {
             ImGui::Separator();
             if (ImGui::MenuItem("退出", "Alt+F4")) {
                 // 有未保存修改时先弹确认框，由 draw_close_confirm 决定是否真的退出。
-                if (dirty || motion_dirty_edit) {
+                if (dirty || motion_dirty_edit || camera_motion.dirty) {
                     close_requested = true;
                 } else if (GLFWwindow* current = glfwGetCurrentContext()) {
                     glfwSetWindowShouldClose(current, 1);
@@ -989,6 +997,7 @@ void Viewer::draw_ui() {
             tab("检索", &panel_preview_search);
             tab("动作", &panel_motion);
             if (pmx::modules().timeline) tab("时间线", &panel_timeline);
+            if (pmx::modules().timeline) tab("相机", &panel_camera);
             if (pmx::modules().bake) tab("烘焙", &panel_bake);
             if (pmx::modules().render_output || pmx::modules().audio)
                 tab("输出", &panel_output);
@@ -1021,7 +1030,8 @@ void Viewer::draw_close_confirm() {
     if (!close_requested) return;
     const bool model_unsaved = dirty;
     const bool motion_unsaved = motion_dirty_edit;
-    if (!model_unsaved && !motion_unsaved) {
+    const bool camera_unsaved = camera_motion.dirty;
+    if (!model_unsaved && !motion_unsaved && !camera_unsaved) {
         close_requested = false;
         if (GLFWwindow* current = glfwGetCurrentContext())
             glfwSetWindowShouldClose(current, 1);
@@ -1035,14 +1045,16 @@ void Viewer::draw_close_confirm() {
     }
     if (ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         if (model_unsaved) ImGui::TextUnformatted("模型有未保存的修改。");
-        if (motion_unsaved) ImGui::TextUnformatted("动作（时间线 / VMD）有未保存的修改。");
+        if (motion_unsaved) ImGui::TextUnformatted("模型动作（时间线 / VMD）有未保存的修改。");
+        if (camera_unsaved) ImGui::TextUnformatted("相机动作有未保存的修改（独立的相机 VMD）。");
         ImGui::TextDisabled("退出后这些修改会丢失。");
         ImGui::Separator();
-        const float w = pmxui::scale(88.0f);
+        const float w = pmxui::scale(108.0f);
         if (ImGui::Button("全部保存并退出", ImVec2(w, 0))) {
             bool ok = true;
             if (model_unsaved) ok = save_model_dialog(false);
             if (ok && motion_unsaved) ok = save_motion_dialog();
+            if (ok && camera_unsaved) ok = save_camera_dialog();
             if (ok) {
                 close_requested = false;
                 ImGui::CloseCurrentPopup();
@@ -1052,10 +1064,13 @@ void Viewer::draw_close_confirm() {
                 status = "保存未完成（已取消或保存失败），仍停留在编辑器中";
             }
         }
-        if (motion_unsaved) {
+        if (motion_unsaved || camera_unsaved) {
             ImGui::SameLine();
-            if (ImGui::Button("只保存动作", ImVec2(w, 0))) {
-                if (save_motion_dialog()) {
+            if (ImGui::Button("只保存动作与相机", ImVec2(w, 0))) {
+                bool ok = true;
+                if (motion_unsaved) ok = save_motion_dialog();
+                if (ok && camera_unsaved) ok = save_camera_dialog();
+                if (ok) {
                     close_requested = false;
                     ImGui::CloseCurrentPopup();
                     if (GLFWwindow* current = glfwGetCurrentContext())
@@ -1104,12 +1119,12 @@ void Viewer::draw_scene(int fb_w, int fb_h) {
     settings.background = {bg[0], bg[1], bg[2]};
     settings.light_dir = {light[0], light[1], light[2]};
 
-    // 场景相机 gizmo：有相机轨就显示机位线框；从相机轨取景时不再画自己。
+    // 场景相机 gizmo：有相机动作就显示机位线框；从相机视角取景时不画自己。
     settings.show_camera = false;
     settings.camera_valid = false;
-    if (preview_mode && camera_gizmo && !camera_view && !timeline.camera_track) {
+    if (preview_mode && camera_gizmo && !camera_view && camera_motion.loaded()) {
         pmx::OrbitCamera track_cam;
-        if (timeline_camera_orbit(track_cam)) {
+        if (camera_motion_orbit(track_cam)) {
             settings.camera_valid = true;
             settings.camera_eye = track_cam.eye();
             settings.camera_target = track_cam.target;
@@ -1178,37 +1193,120 @@ bool Viewer::load_vmd_file(const std::string& path, std::string* err) {
     }
     try {
         auto loaded = std::make_unique<pmx::VmdMotion>(pmx::load_vmd(path));
-        motion = std::move(loaded);
-        motion_binding = pmx::bind_vmd(model, *motion);
+        // VMD 文件可以同时带模型动作与相机动作；这里按内容拆分到独立的两份状态。
+        pmx::CameraTrack camera_track = pmx::camera_track_from_vmd(*loaded);
+        const bool has_camera = !camera_track.empty();
+        const bool has_model =
+            !loaded->bone_tracks.empty() || !loaded->morph_tracks.empty();
+        if (!has_model && !has_camera) {
+            if (err) *err = "VMD 里没有动作或相机帧";
+            return false;
+        }
+
         motion_frame = 0.0f;
         motion_speed = 1.0f;
-        motion_loop = true;
-        motion_playing = motion->max_frame > 0;
-        motion_dirty = true;
-        vmd_path = path;
-        // 时间线以 clip 为编辑对象；导入时同步一份，之后两者保持一致。
-        if (pmx::modules().timeline) {
-            timeline_sync_from_motion(*this);
-            timeline.enabled = true;
-            motion_dirty_edit = false;
+        if (has_model) {
+            // Viewer::motion 只保存模型动作；相机帧已拆进 camera_track。
+            loaded->camera_track.clear();
+            loaded->max_frame = loaded->model_max_frame();
+            motion = std::move(loaded);
+            motion_binding = pmx::bind_vmd(model, *motion);
+            motion_loop = true;
+            motion_playing = motion->max_frame > 0;
+            motion_dirty = true;
+            vmd_path = path;
+            // 时间线以 clip 为编辑对象；导入时同步一份，之后两者保持一致。
+            if (pmx::modules().timeline) {
+                timeline_sync_from_motion(*this);
+                timeline.enabled = true;
+                motion_dirty_edit = false;
+            }
+            clear_manual_pose();
+            apply_motion_frame();  // 先落到第 0 帧，物理复位也以该帧为初始姿态
         }
-        clear_manual_pose();
-        apply_motion_frame();  // 先落到第 0 帧，物理复位也以该帧为初始姿态
+
+        if (has_camera) {
+            camera_motion.track = std::move(camera_track);
+            camera_motion.source = path;
+            camera_motion.dirty = false;
+            // 纯相机 VMD：直接进入相机视角，省去再按一次 0。
+            if (!has_model) {
+                camera_before_view = camera;
+                camera_view = true;
+            }
+            if (camera_view) apply_camera_motion();
+            motion_playing = has_model ? (motion_playing || camera_view)
+                                       : (camera_motion.max_frame() > 0);
+        }
+
 #ifdef PMX_ENABLE_PHYSICS
-        if (physics_enabled) reset_physics();
+        if (has_model && physics_enabled) reset_physics();
 #endif
-        const pmx::VmdMotion& m = *motion;
-        status = "已导入 VMD " + path + "（骨骼 " +
-                 std::to_string(motion_binding.bone_matched) + "/" +
-                 std::to_string(m.bone_tracks.size()) + " 匹配 · 形态 " +
-                 std::to_string(motion_binding.morph_matched) + "/" +
-                 std::to_string(m.morph_tracks.size()) + " 匹配 · " +
-                 std::to_string(m.max_frame) + " 帧）";
+
+        if (has_model) {
+            const pmx::VmdMotion& m = *motion;
+            status = "已导入 VMD " + path + "（骨骼 " +
+                     std::to_string(motion_binding.bone_matched) + "/" +
+                     std::to_string(m.bone_tracks.size()) + " 匹配 · 形态 " +
+                     std::to_string(motion_binding.morph_matched) + "/" +
+                     std::to_string(m.morph_tracks.size()) + " 匹配 · 模型动作 " +
+                     std::to_string(m.model_max_frame()) + " 帧";
+            if (has_camera)
+                status += " · 相机 " + std::to_string(camera_motion.track.keys.size()) +
+                          " 帧（独立）";
+            status += "）";
+        } else {
+            status = "已导入 VMD 相机动作 " + path + "（" +
+                     std::to_string(camera_motion.track.keys.size()) +
+                     " 帧 · 已进入相机视角，0 退出）";
+        }
         return true;
     } catch (const std::exception& e) {
         if (err) *err = e.what();
         return false;
     }
+}
+
+bool Viewer::load_camera_file(const std::string& path, std::string* err) {
+    if (!pose) {
+        if (err) *err = "尚未加载模型";
+        return false;
+    }
+    if (!preview_mode) {
+        if (err) *err = "相机动作只在预览模式使用，请先切换到预览模式（Ctrl+M）";
+        return false;
+    }
+    try {
+        const pmx::VmdMotion loaded = pmx::load_vmd(path);
+        pmx::CameraTrack track = pmx::camera_track_from_vmd(loaded);
+        if (track.empty()) {
+            if (err) *err = "这个 VMD 没有相机帧";
+            return false;
+        }
+        camera_motion.track = std::move(track);
+        camera_motion.source = path;
+        camera_motion.dirty = false;
+        if (!camera_view) {
+            camera_before_view = camera;
+            camera_view = true;
+        }
+        apply_camera_motion();
+        motion_playing = camera_motion.max_frame() > 0;
+        status = "已导入相机动作 " + path + "（" +
+                 std::to_string(camera_motion.track.keys.size()) + " 帧）";
+        return true;
+    } catch (const std::exception& e) {
+        if (err) *err = e.what();
+        return false;
+    }
+}
+
+void Viewer::clear_camera_motion() {
+    const bool was_viewing = camera_view;
+    camera_view = false;
+    if (was_viewing) camera = camera_before_view;
+    camera_motion = CameraMotion{};
+    status = "已清除相机动作（模型动作保留）";
 }
 
 void Viewer::clear_motion() {
@@ -1220,7 +1318,7 @@ void Viewer::clear_motion() {
     vmd_path.clear();
     timeline_clear(*this);
     clear_manual_pose();
-    status = "已清除 VMD 动作";
+    status = "已清除模型动作（相机动作保留）";
     if (physics_enabled) settle_physics();
 }
 
@@ -1262,14 +1360,21 @@ void Viewer::apply_motion_frame() {
 
 void Viewer::update_motion(float dt) {
     const bool use_clip = pmx::modules().timeline && timeline.clip != nullptr;
-    if ((!motion && !use_clip) || !pose) return;
+    const bool has_model = motion != nullptr || use_clip;
+    const bool has_camera = camera_motion.loaded();
+    if ((!has_model && !has_camera) || !pose) return;
     // VMD 动作只在预览模式（PmxEditor 的 TransformView）使用；编辑模式始终显示
     // 模型原始姿态，避免动作覆盖与物理回写混进数据编辑视图。
     if (!preview_mode) return;
     bool jumped = false;
     if (motion_playing) {
-        const int last_frame =
-            use_clip ? timeline.clip->max_frame() : std::max(0, motion->max_frame);
+        int last_frame = 0;
+        if (use_clip)
+            last_frame = timeline.model_max_frame();
+        else if (motion)
+            last_frame = std::max(0, motion->max_frame);
+        // 相机动作独立但共用播放头：场景长度取两者较长者。
+        last_frame = std::max(last_frame, camera_motion.max_frame());
         const float end = static_cast<float>(last_frame);
         // VMD 帧号按 30 fps 计；单帧 dt 上限 0.1s，避免拖动窗口后跳帧。
         float next = motion_frame + std::min(dt, 0.1f) * 30.0f * motion_speed;
@@ -1289,14 +1394,11 @@ void Viewer::update_motion(float dt) {
     }
     if (motion_dirty) {
         apply_motion_frame();
+        // 相机只在播放头变化时接管：暂停后手动调整机位，K 才能记录新的相机帧。
+        if (camera_view) apply_camera_motion();
         motion_dirty = false;
     }
     timeline.frame = motion_frame;
-    if (pmx::modules().timeline) {
-        // 相机视角下相机轨强制接管，避免用户在检查器里取消勾选后视角悬空。
-        if (camera_view) timeline.camera_track = true;
-        apply_timeline_camera();
-    }
     // 循环回绕会把姿态从末帧瞬移到首帧。MMD / Blender 播放时不会重摆刚体，
     // 这里只清速度：重摆会把几十节的袖链瞬间扯断，之后就被甩飞。
     if (jumped) settle_physics();
@@ -1305,8 +1407,8 @@ void Viewer::update_motion(float dt) {
 void Viewer::sync_audio() {
     if (!audio || !audio->loaded()) return;
     const bool use_clip = pmx::modules().timeline && timeline.clip != nullptr;
-    const bool should_play =
-        preview_mode && motion_playing && (motion != nullptr || use_clip);
+    const bool should_play = preview_mode && motion_playing &&
+                             (motion != nullptr || use_clip || camera_motion.loaded());
     if (!should_play) {
         if (audio->playing()) audio->stop();
         return;
@@ -1326,10 +1428,10 @@ void Viewer::sync_audio() {
     }
 }
 
-bool Viewer::timeline_camera_orbit(pmx::OrbitCamera& out) const {
-    if (!timeline.clip || timeline.clip->camera.empty()) return false;
+bool Viewer::camera_motion_orbit_at(double frame, pmx::OrbitCamera& out) const {
+    if (camera_motion.track.empty()) return false;
     pmx::AnimCameraKey key;
-    if (!pmx::sample_camera_track(timeline.clip->camera, motion_frame, key)) return false;
+    if (!pmx::sample_camera_track(camera_motion.track.keys, frame, key)) return false;
     // MMD 相机：注视点 + 欧拉旋转 + 距离；换算成轨道相机的 yaw / pitch。
     const pmx::Quat q = pmx::camera_rot_quat(key.rot);
     const pmx::Vec3 local{0.0f, 0.0f, -key.distance};
@@ -1349,10 +1451,10 @@ bool Viewer::timeline_camera_orbit(pmx::OrbitCamera& out) const {
     return true;
 }
 
-void Viewer::apply_timeline_camera() {
-    if (!timeline.camera_track) return;
+void Viewer::apply_camera_motion() {
+    if (!camera_view) return;
     pmx::OrbitCamera orbit;
-    if (timeline_camera_orbit(orbit)) camera = orbit;
+    if (camera_motion_orbit_at(motion_frame, orbit)) camera = orbit;
 }
 
 void Viewer::toggle_camera_view() {
@@ -1362,19 +1464,16 @@ void Viewer::toggle_camera_view() {
     }
     if (!camera_view) {
         pmx::OrbitCamera orbit;
-        if (!timeline_camera_orbit(orbit)) {
-            status = "当前动作没有相机轨，无法进入相机视角";
+        if (!camera_motion_orbit_at(motion_frame, orbit)) {
+            status = "还没有相机动作：在「相机」页导入相机 VMD，或记录当前视角";
             return;
         }
         camera_before_view = camera;
-        camera_track_before_view = timeline.camera_track;
-        timeline.camera_track = true;
         camera_view = true;
         camera = orbit;
         status = "相机视角：0 返回自由视角";
     } else {
         camera_view = false;
-        timeline.camera_track = camera_track_before_view;
         camera = camera_before_view;
         status = "已退出相机视角";
     }
@@ -1517,7 +1616,7 @@ static int run_viewer(const std::vector<std::string>& args) {
     // 点窗口关闭按钮 / Alt+F4 时若模型有未保存修改，先拦下关闭请求并弹确认框。
     glfwSetWindowCloseCallback(window, [](GLFWwindow* w) {
         auto* v = static_cast<Viewer*>(glfwGetWindowUserPointer(w));
-        if (v && (v->dirty || v->motion_dirty_edit)) {
+        if (v && (v->dirty || v->motion_dirty_edit || v->camera_motion.dirty)) {
             glfwSetWindowShouldClose(w, GLFW_FALSE);
             v->close_requested = true;
         }

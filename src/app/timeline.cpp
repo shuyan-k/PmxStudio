@@ -18,93 +18,105 @@
 #include "core/name_zh.hpp"
 #include "core/pose.hpp"
 
+// 时间线总长度：模型动作与相机动作取较长者（两者共用播放头）。
+int timeline_max_frame(const Viewer& v) {
+    const int model = v.timeline.clip ? v.timeline.clip->max_frame() : 0;
+    return std::max(model, v.camera_motion.max_frame());
+}
+
 namespace {
 
 // ---------------------------------------------------------------- 关键帧访问
 
-int key_count(const pmx::AnimClip& clip, TimelineTrackKind kind, int track) {
+int key_count(const Viewer& v, TimelineTrackKind kind, int track) {
+    const pmx::AnimClip* clip = v.timeline.clip.get();
     switch (kind) {
         case TimelineTrackKind::Bone:
-            if (track >= 0 && track < static_cast<int>(clip.bones.size()))
-                return static_cast<int>(clip.bones[track].keys.size());
+            if (clip && track >= 0 && track < static_cast<int>(clip->bones.size()))
+                return static_cast<int>(clip->bones[track].keys.size());
             break;
         case TimelineTrackKind::Morph:
-            if (track >= 0 && track < static_cast<int>(clip.morphs.size()))
-                return static_cast<int>(clip.morphs[track].keys.size());
+            if (clip && track >= 0 && track < static_cast<int>(clip->morphs.size()))
+                return static_cast<int>(clip->morphs[track].keys.size());
             break;
         case TimelineTrackKind::Camera:
-            return static_cast<int>(clip.camera.size());
+            return static_cast<int>(v.camera_motion.track.keys.size());
         case TimelineTrackKind::Ik:
             // IK 是逐帧开关列表，界面上作为一条轨道展示。
-            if (track == 0) return static_cast<int>(clip.ik.size());
+            if (clip && track == 0) return static_cast<int>(clip->ik.size());
             break;
     }
     return 0;
 }
 
-int key_frame(const pmx::AnimClip& clip, TimelineTrackKind kind, int track, int key) {
-    if (key < 0 || key >= key_count(clip, kind, track)) return -1;
+int key_frame(const Viewer& v, TimelineTrackKind kind, int track, int key) {
+    if (key < 0 || key >= key_count(v, kind, track)) return -1;
+    const pmx::AnimClip* clip = v.timeline.clip.get();
     switch (kind) {
         case TimelineTrackKind::Bone:
-            return clip.bones[track].keys[key].frame;
+            return clip->bones[track].keys[key].frame;
         case TimelineTrackKind::Morph:
-            return clip.morphs[track].keys[key].frame;
+            return clip->morphs[track].keys[key].frame;
         case TimelineTrackKind::Camera:
-            return clip.camera[key].frame;
+            return v.camera_motion.track.keys[key].frame;
         case TimelineTrackKind::Ik:
-            return clip.ik[key].frame;
+            return clip->ik[key].frame;
     }
     return -1;
 }
 
 // 返回是否成功写入新帧号。
-bool set_key_frame(pmx::AnimClip& clip, const TimelineKeyRef& ref, int frame) {
-    if (ref.key < 0 || ref.key >= key_count(clip, ref.kind, ref.track)) return false;
+bool set_key_frame(Viewer& v, const TimelineKeyRef& ref, int frame) {
+    if (ref.key < 0 || ref.key >= key_count(v, ref.kind, ref.track)) return false;
+    pmx::AnimClip* clip = v.timeline.clip.get();
     switch (ref.kind) {
         case TimelineTrackKind::Bone:
-            clip.bones[ref.track].keys[ref.key].frame = frame;
+            clip->bones[ref.track].keys[ref.key].frame = frame;
             return true;
         case TimelineTrackKind::Morph:
-            clip.morphs[ref.track].keys[ref.key].frame = frame;
+            clip->morphs[ref.track].keys[ref.key].frame = frame;
             return true;
         case TimelineTrackKind::Camera:
-            clip.camera[ref.key].frame = frame;
+            v.camera_motion.track.keys[ref.key].frame = frame;
             return true;
         case TimelineTrackKind::Ik:
-            clip.ik[ref.key].frame = frame;
+            clip->ik[ref.key].frame = frame;
             return true;
     }
     return false;
 }
 
-void erase_key(pmx::AnimClip& clip, const TimelineKeyRef& ref) {
+void erase_key(Viewer& v, const TimelineKeyRef& ref) {
+    pmx::AnimClip* clip = v.timeline.clip.get();
     switch (ref.kind) {
         case TimelineTrackKind::Bone: {
-            auto& keys = clip.bones[ref.track].keys;
+            auto& keys = clip->bones[ref.track].keys;
             if (ref.key >= 0 && ref.key < static_cast<int>(keys.size()))
                 keys.erase(keys.begin() + ref.key);
             break;
         }
         case TimelineTrackKind::Morph: {
-            auto& keys = clip.morphs[ref.track].keys;
+            auto& keys = clip->morphs[ref.track].keys;
             if (ref.key >= 0 && ref.key < static_cast<int>(keys.size()))
                 keys.erase(keys.begin() + ref.key);
             break;
         }
-        case TimelineTrackKind::Camera:
-            if (ref.key >= 0 && ref.key < static_cast<int>(clip.camera.size()))
-                clip.camera.erase(clip.camera.begin() + ref.key);
+        case TimelineTrackKind::Camera: {
+            auto& keys = v.camera_motion.track.keys;
+            if (ref.key >= 0 && ref.key < static_cast<int>(keys.size()))
+                keys.erase(keys.begin() + ref.key);
             break;
+        }
         case TimelineTrackKind::Ik:
-            if (ref.key >= 0 && ref.key < static_cast<int>(clip.ik.size()))
-                clip.ik.erase(clip.ik.begin() + ref.key);
+            if (ref.key >= 0 && ref.key < static_cast<int>(clip->ik.size()))
+                clip->ik.erase(clip->ik.begin() + ref.key);
             break;
     }
 }
 
 // 与 motion 面板保持一致的跳帧语义：写回帧号、标脏、物理只清速度。
 void jump_to_frame(Viewer& v, float frame) {
-    const int max_frame = std::max(0, v.timeline.max_frame());
+    const int max_frame = std::max(0, timeline_max_frame(v));
     frame = std::max(0.0f, std::min(frame, static_cast<float>(max_frame)));
     v.timeline.frame = frame;
     v.motion_frame = frame;
@@ -129,20 +141,6 @@ struct ClipboardKey {
 };
 
 std::vector<ClipboardKey> g_clipboard;
-
-void insert_camera_key(pmx::AnimClip& clip, const pmx::AnimCameraKey& key) {
-    auto& keys = clip.camera;
-    keys.erase(std::remove_if(keys.begin(), keys.end(),
-                              [&key](const pmx::AnimCameraKey& k) {
-                                  return k.frame == key.frame;
-                              }),
-               keys.end());
-    keys.push_back(key);
-    std::sort(keys.begin(), keys.end(),
-              [](const pmx::AnimCameraKey& a, const pmx::AnimCameraKey& b) {
-                  return a.frame < b.frame;
-              });
-}
 
 void insert_ik_key(pmx::AnimClip& clip, const pmx::AnimIkKey& key) {
     auto& keys = clip.ik;
@@ -177,47 +175,50 @@ struct SheetRow {
 void build_rows(Viewer& v, std::vector<SheetRow>& rows) {
     rows.clear();
     const pmx::AnimClip* clip = v.timeline.clip.get();
-    if (!clip) return;
     const bool show_all = v.timeline.show_all_tracks;
 
-    for (int i = 0; i < static_cast<int>(clip->bones.size()); ++i) {
-        const pmx::AnimBoneTrack& track = clip->bones[i];
-        if (!show_all && track.keys.empty()) continue;
-        std::string name = track.name;
-        std::string name_en;
-        if (track.bone >= 0 && track.bone < static_cast<int>(v.model.bones.size())) {
-            name = v.model.bones[track.bone].name;
-            name_en = v.model.bones[track.bone].name_en;
+    if (clip) {
+        for (int i = 0; i < static_cast<int>(clip->bones.size()); ++i) {
+            const pmx::AnimBoneTrack& track = clip->bones[i];
+            if (!show_all && track.keys.empty()) continue;
+            std::string name = track.name;
+            std::string name_en;
+            if (track.bone >= 0 && track.bone < static_cast<int>(v.model.bones.size())) {
+                name = v.model.bones[track.bone].name;
+                name_en = v.model.bones[track.bone].name_en;
+            }
+            std::string label = "骨骼 · " + display_name(pmx::NameKind::Bone, name, name_en);
+            if (track.bone < 0) label += "（未绑定）";
+            rows.push_back({TimelineTrackKind::Bone, i, label,
+                            static_cast<int>(track.keys.size())});
         }
-        std::string label = "骨骼 · " + display_name(pmx::NameKind::Bone, name, name_en);
-        if (track.bone < 0) label += "（未绑定）";
-        rows.push_back({TimelineTrackKind::Bone, i, label,
-                        static_cast<int>(track.keys.size())});
-    }
 
-    for (int i = 0; i < static_cast<int>(clip->morphs.size()); ++i) {
-        const pmx::AnimMorphTrack& track = clip->morphs[i];
-        if (!show_all && track.keys.empty()) continue;
-        std::string name = track.name;
-        std::string name_en;
-        if (track.morph >= 0 && track.morph < static_cast<int>(v.model.morphs.size())) {
-            name = v.model.morphs[track.morph].name;
-            name_en = v.model.morphs[track.morph].name_en;
+        for (int i = 0; i < static_cast<int>(clip->morphs.size()); ++i) {
+            const pmx::AnimMorphTrack& track = clip->morphs[i];
+            if (!show_all && track.keys.empty()) continue;
+            std::string name = track.name;
+            std::string name_en;
+            if (track.morph >= 0 && track.morph < static_cast<int>(v.model.morphs.size())) {
+                name = v.model.morphs[track.morph].name;
+                name_en = v.model.morphs[track.morph].name_en;
+            }
+            std::string label = "形态 · " + display_name(pmx::NameKind::Morph, name, name_en);
+            if (track.morph < 0) label += "（未绑定）";
+            rows.push_back({TimelineTrackKind::Morph, i, label,
+                            static_cast<int>(track.keys.size())});
         }
-        std::string label = "形态 · " + display_name(pmx::NameKind::Morph, name, name_en);
-        if (track.morph < 0) label += "（未绑定）";
-        rows.push_back({TimelineTrackKind::Morph, i, label,
-                        static_cast<int>(track.keys.size())});
+
+        if (show_all || !clip->ik.empty()) {
+            rows.push_back({TimelineTrackKind::Ik, 0, "IK · IK 开关轨",
+                            static_cast<int>(clip->ik.size())});
+        }
     }
 
-    if (v.timeline.camera_track && (show_all || !clip->camera.empty())) {
-        rows.push_back({TimelineTrackKind::Camera, 0, "相机 · 相机轨",
-                        static_cast<int>(clip->camera.size())});
-    }
-
-    if (show_all || !clip->ik.empty()) {
-        rows.push_back({TimelineTrackKind::Ik, 0, "IK · IK 开关轨",
-                        static_cast<int>(clip->ik.size())});
+    // 相机动作独立于模型动作：没有 clip 也照常显示。
+    if (show_all || v.camera_motion.loaded()) {
+        rows.push_back({TimelineTrackKind::Camera, 0,
+                        "相机 · 相机动作（独立）",
+                        static_cast<int>(v.camera_motion.track.keys.size())});
     }
 }
 
@@ -290,8 +291,8 @@ void timeline_set_clip(Viewer& v, pmx::AnimClip clip) {
     v.timeline.active_track = -1;
     v.timeline.active_key = -1;
     v.timeline.dragging_playhead = false;
-    // 保留当前帧，新剪辑更短时夹到末帧。
-    const int max_frame = v.timeline.clip->max_frame();
+    // 保留当前帧；播放头属于整个场景，模型动作更短时仍可停在相机动作的帧上。
+    const int max_frame = std::max(v.timeline.clip->max_frame(), v.camera_motion.max_frame());
     if (v.motion_frame > static_cast<float>(max_frame))
         v.motion_frame = static_cast<float>(max_frame);
     v.timeline.frame = v.motion_frame;
@@ -376,9 +377,51 @@ void timeline_insert_key(Viewer& v) {
     v.status = message;
 }
 
+// 视口相机 -> MMD 相机关键帧。
+// 轨道相机的 eye 偏移是 (cos p sin yaw, sin p, cos p cos yaw)，MMD 的
+// 相机欧拉角（YXZ）对应 y = yaw - 180°，pitch 一致，滚转记 0。
+pmx::AnimCameraKey camera_key_from_orbit(const pmx::OrbitCamera& camera, int frame) {
+    pmx::AnimCameraKey key;
+    key.frame = frame;
+    key.target = camera.target;
+    key.distance = std::max(0.01f, camera.distance);
+    const float yaw =
+        camera.yaw > 0.0f ? camera.yaw - pmx::kPi : camera.yaw + pmx::kPi;
+    key.rot = pmx::Vec3{camera.pitch, yaw, 0.0f};
+    key.fov = static_cast<int>(std::lround(camera.fov));
+    key.perspective = true;
+    return key;
+}
+
+void timeline_insert_camera_key(Viewer& v) {
+    if (!v.preview_mode) {
+        v.status = "相机关键帧只在预览模式记录（Ctrl+M 切换）";
+        return;
+    }
+    const int frame = static_cast<int>(std::lround(v.motion_frame));
+    const pmx::AnimCameraKey key = camera_key_from_orbit(v.camera, frame);
+    auto& keys = v.camera_motion.track.keys;
+    const bool replacing =
+        std::any_of(keys.begin(), keys.end(),
+                    [frame](const pmx::AnimCameraKey& k) { return k.frame == frame; });
+    const int index = v.camera_motion.track.set_key(key);
+    v.camera_motion.dirty = true;
+
+    v.timeline.selection.clear();
+    v.timeline.selection.push_back({TimelineTrackKind::Camera, 0, index});
+    v.timeline.active_track = -1;
+    v.timeline.active_key = -1;
+    g_active_kind = TimelineTrackKind::Camera;
+    g_active_track = 0;
+
+    char message[160];
+    std::snprintf(message, sizeof message, "%s相机关键帧：第 %d 帧 · 距离 %.2f · FOV %d°",
+                  replacing ? "已覆盖" : "已记录", frame, key.distance, key.fov);
+    v.status = message;
+}
+
 void timeline_delete_selection(Viewer& v) {
-    pmx::AnimClip* clip = v.timeline.clip.get();
-    if (!clip || v.timeline.selection.empty()) return;
+    if (v.timeline.selection.empty()) return;
 
     std::vector<TimelineKeyRef> refs = v.timeline.selection;
     // 同一轨道按 key 下标从大到小删除，前面的删除不会让后面的下标失效。
@@ -396,9 +439,13 @@ void timeline_delete_selection(Viewer& v) {
                refs.end());
 
     int removed = 0;
+    bool camera_removed = false;
+    bool model_removed = false;
     for (const TimelineKeyRef& ref : refs) {
-        if (ref.key < 0 || ref.key >= key_count(*clip, ref.kind, ref.track)) continue;
-        erase_key(*clip, ref);
+        if (ref.key < 0 || ref.key >= key_count(v, ref.kind, ref.track)) continue;
+        erase_key(v, ref);
+        camera_removed |= ref.kind == TimelineTrackKind::Camera;
+        model_removed |= ref.kind != TimelineTrackKind::Camera;
         ++removed;
     }
 
@@ -406,7 +453,8 @@ void timeline_delete_selection(Viewer& v) {
     v.timeline.active_key = -1;
     g_active_track = -1;
     if (removed > 0) {
-        v.motion_dirty_edit = true;
+        if (camera_removed) v.camera_motion.dirty = true;
+        if (model_removed) v.motion_dirty_edit = true;
         char message[96];
         std::snprintf(message, sizeof message, "已删除 %d 个关键帧", removed);
         v.status = message;
@@ -414,25 +462,32 @@ void timeline_delete_selection(Viewer& v) {
 }
 
 void timeline_move_selection(Viewer& v, int delta_frames) {
-    pmx::AnimClip* clip = v.timeline.clip.get();
-    if (!clip || v.timeline.selection.empty() || delta_frames == 0) return;
+    if (v.timeline.selection.empty() || delta_frames == 0) return;
 
     int moved = 0;
     bool clamped = false;
+    bool camera_moved = false;
+    bool model_moved = false;
     for (const TimelineKeyRef& ref : v.timeline.selection) {
-        const int frame = key_frame(*clip, ref.kind, ref.track, ref.key);
+        const int frame = key_frame(v, ref.kind, ref.track, ref.key);
         if (frame < 0) continue;
         const int target = frame + delta_frames;
         if (target < 0) clamped = true;
-        if (set_key_frame(*clip, ref, std::max(0, target))) ++moved;
+        if (set_key_frame(v, ref, std::max(0, target))) {
+            ++moved;
+            camera_moved |= ref.kind == TimelineTrackKind::Camera;
+            model_moved |= ref.kind != TimelineTrackKind::Camera;
+        }
     }
     if (moved == 0) return;
 
-    clip->sort_keys();
+    if (v.timeline.clip) v.timeline.clip->sort_keys();
+    v.camera_motion.track.sort_keys();
     v.timeline.selection.clear();
     v.timeline.active_key = -1;
     g_active_track = -1;
-    v.motion_dirty_edit = true;
+    if (camera_moved) v.camera_motion.dirty = true;
+    if (model_moved) v.motion_dirty_edit = true;
 
     char message[160];
     std::snprintf(message, sizeof message, "已移动 %d 个关键帧 %+d 帧%s", moved, delta_frames,
@@ -441,9 +496,6 @@ void timeline_move_selection(Viewer& v, int delta_frames) {
 }
 
 void timeline_copy_selection(Viewer& v) {
-    const pmx::AnimClip* clip = v.timeline.clip.get();
-    if (!clip) return;
-
     struct Entry {
         const TimelineKeyRef* ref;
         int frame;
@@ -451,7 +503,7 @@ void timeline_copy_selection(Viewer& v) {
     std::vector<Entry> entries;
     int base = std::numeric_limits<int>::max();
     for (const TimelineKeyRef& ref : v.timeline.selection) {
-        const int frame = key_frame(*clip, ref.kind, ref.track, ref.key);
+        const int frame = key_frame(v, ref.kind, ref.track, ref.key);
         if (frame < 0) continue;
         entries.push_back({&ref, frame});
         base = std::min(base, frame);
@@ -461,6 +513,7 @@ void timeline_copy_selection(Viewer& v) {
         return;
     }
 
+    const pmx::AnimClip* clip = v.timeline.clip.get();
     g_clipboard.clear();
     g_clipboard.reserve(entries.size());
     for (const Entry& entry : entries) {
@@ -471,6 +524,7 @@ void timeline_copy_selection(Viewer& v) {
         item.offset = entry.frame - base;
         switch (ref.kind) {
             case TimelineTrackKind::Bone: {
+                if (!clip) continue;
                 const pmx::AnimBoneTrack& track = clip->bones[ref.track];
                 item.bone_key = track.keys[ref.key];
                 item.bone = track.bone;
@@ -478,6 +532,7 @@ void timeline_copy_selection(Viewer& v) {
                 break;
             }
             case TimelineTrackKind::Morph: {
+                if (!clip) continue;
                 const pmx::AnimMorphTrack& track = clip->morphs[ref.track];
                 item.morph_key = track.keys[ref.key];
                 item.morph = track.morph;
@@ -485,9 +540,10 @@ void timeline_copy_selection(Viewer& v) {
                 break;
             }
             case TimelineTrackKind::Camera:
-                item.camera_key = clip->camera[ref.key];
+                item.camera_key = v.camera_motion.track.keys[ref.key];
                 break;
             case TimelineTrackKind::Ik:
+                if (!clip) continue;
                 item.ik_key = clip->ik[ref.key];
                 item.name = "IK";
                 break;
@@ -501,19 +557,21 @@ void timeline_copy_selection(Viewer& v) {
 }
 
 void timeline_paste(Viewer& v, int frame) {
-    pmx::AnimClip* clip = v.timeline.clip.get();
-    if (!clip) return;
     if (g_clipboard.empty()) {
         v.status = "剪贴板没有关键帧";
         return;
     }
 
+    pmx::AnimClip* clip = v.timeline.clip.get();
     frame = std::max(0, frame);
     int added = 0;
+    bool camera_added = false;
+    bool model_added = false;
     for (const ClipboardKey& item : g_clipboard) {
         const int target_frame = std::max(0, frame + item.offset);
         switch (item.kind) {
             case TimelineTrackKind::Bone: {
+                if (!clip) break;
                 int track = clip->find_bone_track(item.bone, item.name);
                 if (track < 0 && item.track >= 0 &&
                     item.track < static_cast<int>(clip->bones.size())) {
@@ -530,10 +588,12 @@ void timeline_paste(Viewer& v, int frame) {
                 pmx::AnimBoneKey key = item.bone_key;
                 key.frame = target_frame;
                 clip->set_bone_key(track, key);
+                model_added = true;
                 ++added;
                 break;
             }
             case TimelineTrackKind::Morph: {
+                if (!clip) break;
                 int track = clip->find_morph_track(item.morph, item.name);
                 if (track < 0 && item.track >= 0 &&
                     item.track < static_cast<int>(clip->morphs.size())) {
@@ -550,29 +610,35 @@ void timeline_paste(Viewer& v, int frame) {
                 pmx::AnimMorphKey key = item.morph_key;
                 key.frame = target_frame;
                 clip->set_morph_key(track, key);
+                model_added = true;
                 ++added;
                 break;
             }
             case TimelineTrackKind::Camera: {
                 pmx::AnimCameraKey key = item.camera_key;
                 key.frame = target_frame;
-                insert_camera_key(*clip, key);
+                v.camera_motion.track.set_key(key);
+                camera_added = true;
                 ++added;
                 break;
             }
             case TimelineTrackKind::Ik: {
+                if (!clip) break;
                 pmx::AnimIkKey key = item.ik_key;
                 key.frame = target_frame;
                 insert_ik_key(*clip, key);
+                model_added = true;
                 ++added;
                 break;
             }
         }
     }
 
-    clip->sort_keys();
+    if (clip) clip->sort_keys();
+    v.camera_motion.track.sort_keys();
     if (added > 0) {
-        v.motion_dirty_edit = true;
+        if (camera_added) v.camera_motion.dirty = true;
+        if (model_added) v.motion_dirty_edit = true;
         char message[128];
         std::snprintf(message, sizeof message, "已粘贴 %d 个关键帧到第 %d 帧", added, frame);
         v.status = message;
@@ -629,8 +695,9 @@ void draw_timeline_panel(Viewer& v) {
     }
 
     pmx::AnimClip* clip = timeline.clip.get();
-    const bool loaded = clip != nullptr;
-    const int max_frame = loaded ? clip->max_frame() : 0;
+    const bool has_clip = clip != nullptr;
+    const bool loaded = has_clip || v.camera_motion.loaded();
+    const int max_frame = timeline_max_frame(v);
 
     // ------------------------------------------------------------ 工具栏
     ImGui::BeginDisabled(!loaded);
@@ -664,21 +731,28 @@ void draw_timeline_panel(Viewer& v) {
     ImGui::SliderFloat("##timeline_zoom", &timeline.px_per_frame, 0.5f, 40.0f, "%.1f 像素/帧");
     ImGui::SetItemTooltip("横向缩放：滚轮以鼠标为锚点缩放");
     ImGui::SameLine();
-    if (ImGui::Button("K 打帧", ImVec2(pmxui::scale(58.0f), 0.0f))) timeline_insert_key(v);
-    ImGui::SetItemTooltip("把当前姿态打成关键帧（快捷键 K）");
+    ImGui::BeginDisabled(!v.camera_view && !has_clip);
+    if (ImGui::Button(v.camera_view ? "K 相机帧" : "K 打帧",
+                      ImVec2(pmxui::scale(70.0f), 0.0f))) {
+        if (v.camera_view)
+            timeline_insert_camera_key(v);
+        else
+            timeline_insert_key(v);
+    }
+    ImGui::SetItemTooltip(v.camera_view ? "把当前机位记成相机关键帧（快捷键 K）"
+                                        : "把当前姿态打成关键帧（快捷键 K）");
+    ImGui::EndDisabled();
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::BeginDisabled(!loaded || timeline.selection.empty());
+    ImGui::BeginDisabled(timeline.selection.empty());
     if (ImGui::Button("删除", ImVec2(pmxui::scale(46.0f), 0.0f)))
         timeline_delete_selection(v);
     ImGui::EndDisabled();
     ImGui::SetItemTooltip("删除选中的关键帧（Del）");
     ImGui::SameLine();
-    ImGui::Checkbox("相机轨", &timeline.camera_track);
-    ImGui::SameLine();
     if (ImGui::Button(v.camera_view ? "退出相机视角 (0)" : "相机视角 (0)"))
         v.toggle_camera_view();
-    ImGui::SetItemTooltip("按输出宽高比从 VMD 相机轨看画面；0 / 小键盘 0 切换");
+    ImGui::SetItemTooltip("按输出宽高比从相机动作取景；0 / 小键盘 0 切换");
     ImGui::SameLine();
     ImGui::Checkbox("相机框", &v.camera_gizmo);
     ImGui::SetItemTooltip("在视口画出相机机位与取景锥");
@@ -701,8 +775,8 @@ void draw_timeline_panel(Viewer& v) {
     rows_top_screen = ImGui::GetCursorScreenPos().y;
 
     if (!loaded) {
-        ImGui::TextDisabled("未载入动作");
-        ImGui::TextDisabled("导入 VMD 后自动生成时间线");
+        ImGui::TextDisabled("未载入动作或相机");
+        ImGui::TextDisabled("导入 VMD 后自动拆分：模型动作 / 相机动作");
     } else if (rows.empty()) {
         ImGui::TextDisabled("没有可显示的轨道");
         ImGui::TextDisabled("按 K 为当前姿态打帧");
@@ -760,11 +834,11 @@ void draw_timeline_panel(Viewer& v) {
     };
     auto key_center = [&](int row_index, int key) {
         const SheetRow& row = rows[static_cast<std::size_t>(row_index)];
-        return ImVec2(frame_to_x(key_frame(*clip, row.kind, row.track, key)),
+        return ImVec2(frame_to_x(key_frame(v, row.kind, row.track, key)),
                       row_center_y(row_index));
     };
 
-    if (clip) {
+    if (loaded) {
         // 滚轮：缩放（以鼠标为锚点）或 Shift 水平滚动。
         if (ImGui::IsItemHovered() && io.MouseWheel != 0.0f) {
             if (io.KeyShift) {
@@ -788,7 +862,7 @@ void draw_timeline_panel(Viewer& v) {
             const int row = static_cast<int>((mouse.y - row_top) / row_h);
             if (row < 0 || row >= static_cast<int>(rows.size())) return false;
             const SheetRow& item = rows[static_cast<std::size_t>(row)];
-            const int count = key_count(*clip, item.kind, item.track);
+            const int count = key_count(v, item.kind, item.track);
             for (int k = 0; k < count; ++k) {
                 const ImVec2 c = key_center(row, k);
                 if (std::fabs(mouse.x - c.x) <= diamond_r * 1.6f &&
@@ -833,7 +907,7 @@ void draw_timeline_panel(Viewer& v) {
                                std::max(g_box_start.y, io.MousePos.y));
                 for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
                     const SheetRow& item = rows[static_cast<std::size_t>(i)];
-                    const int count = key_count(*clip, item.kind, item.track);
+                    const int count = key_count(v, item.kind, item.track);
                     for (int k = 0; k < count; ++k) {
                         const ImVec2 c = key_center(i, k);
                         if (c.x >= a.x && c.x <= b.x && c.y >= a.y && c.y <= b.y)
@@ -872,8 +946,8 @@ void draw_timeline_panel(Viewer& v) {
     draw->AddRectFilled(origin, ImVec2(canvas_end.x, origin.y + header_h),
                         IM_COL32(33, 35, 40, 255));
 
-    if (!clip) {
-        const char* hint = "未载入动作";
+    if (!loaded) {
+        const char* hint = "未载入动作或相机";
         const ImVec2 size = ImGui::CalcTextSize(hint);
         draw->AddText(ImVec2(origin.x + (canvas.x - size.x) * 0.5f,
                              origin.y + (canvas.y - size.y) * 0.5f),
@@ -921,9 +995,9 @@ void draw_timeline_panel(Viewer& v) {
         draw->AddLine(ImVec2(origin.x, y1), ImVec2(canvas_end.x, y1),
                       IM_COL32(42, 44, 50, 255), 1.0f);
 
-        const int count = key_count(*clip, item.kind, item.track);
+        const int count = key_count(v, item.kind, item.track);
         for (int k = 0; k < count; ++k) {
-            const int frame = key_frame(*clip, item.kind, item.track, k);
+            const int frame = key_frame(v, item.kind, item.track, k);
             const float x = frame_to_x(frame);
             if (x < origin.x - diamond_r || x > canvas_end.x + diamond_r) continue;
             const float cy = y0 + row_h * 0.5f;

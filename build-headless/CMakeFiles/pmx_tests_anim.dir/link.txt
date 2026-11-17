@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/pmx_tests_anim.dir/tests/test_anim.cpp.o -o pmx_tests_anim  libpmx_core.a libbullet.a 

@@ -43,10 +43,14 @@ void panel_motion(Viewer& v) {
     ImGui::TextWrapped("%s", motion.source.c_str());
     if (!motion.model_name.empty())
         ImGui::TextDisabled("动作模型：%s", motion.model_name.c_str());
-    ImGui::TextDisabled("骨骼轨道 %d · 形态轨道 %d · 相机轨道 %d · 时长 %d 帧",
+    ImGui::TextDisabled("模型动作：骨骼轨道 %d · 形态轨道 %d · 时长 %d 帧",
                         static_cast<int>(motion.bone_tracks.size()),
-                        static_cast<int>(motion.morph_tracks.size()), motion.camera_keys,
-                        motion.max_frame);
+                        static_cast<int>(motion.morph_tracks.size()),
+                        motion.model_max_frame());
+    if (motion.camera_keys > 0) {
+        ImGui::TextDisabled("文件另含 %d 个相机帧（已拆到独立的「相机」页）",
+                            motion.camera_keys);
+    }
     ImGui::TextDisabled("已匹配：骨骼 %d/%d，形态 %d/%d", v.motion_binding.bone_matched,
                         static_cast<int>(motion.bone_tracks.size()),
                         v.motion_binding.morph_matched,
@@ -54,11 +58,13 @@ void panel_motion(Viewer& v) {
     ImGui::TextDisabled("播放中手动拖动骨骼只取消该骨骼的动作，其余骨骼继续播放。");
 
     // ------------------------------------------------------------ 播放
+    // 播放头覆盖整个场景：模型动作与独立相机动作取较长者。
+    const int scene_end = std::max(motion.max_frame, v.camera_motion.max_frame());
     ImGui::SeparatorText("播放");
-    ImGui::BeginDisabled(motion.max_frame <= 0);
+    ImGui::BeginDisabled(scene_end <= 0);
     if (ImGui::Button(v.motion_playing ? "暂停" : "播放")) {
         if (!v.motion_playing) {
-            if (v.motion_frame >= static_cast<float>(motion.max_frame)) v.motion_frame = 0.0f;
+            if (v.motion_frame >= static_cast<float>(scene_end)) v.motion_frame = 0.0f;
             v.motion_dirty = true;
             if (v.physics_enabled) v.settle_physics();
         }
@@ -79,12 +85,12 @@ void panel_motion(Viewer& v) {
     ImGui::SliderFloat("速度", &v.motion_speed, 0.1f, 4.0f, "%.2fx");
     ImGui::SetItemTooltip("1.00x 表示与 MMD 相同的 30 fps 时间轴");
 
-    if (motion.max_frame > 0) {
+    if (scene_end > 0) {
         int frame = static_cast<int>(std::lround(v.motion_frame));
         char frame_format[64];
-        std::snprintf(frame_format, sizeof frame_format, "帧 %%d / %d", motion.max_frame);
+        std::snprintf(frame_format, sizeof frame_format, "帧 %%d / %d", scene_end);
         ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::SliderInt("##motion_frame", &frame, 0, motion.max_frame, frame_format)) {
+        if (ImGui::SliderInt("##motion_frame", &frame, 0, scene_end, frame_format)) {
             v.motion_frame = static_cast<float>(frame);
             v.motion_dirty = true;
             // 拖到任意帧等同一次瞬移：只清速度，不重摆刚体（重摆会把刚性链扯断）。

@@ -18,26 +18,6 @@
 
 namespace {
 
-// 与 Viewer::apply_timeline_camera 相同的换算，但不改 Viewer 的相机。
-void camera_from_track(const pmx::AnimClip& clip, double frame, pmx::OrbitCamera& camera) {
-    if (clip.camera.empty()) return;
-    pmx::AnimCameraKey key;
-    if (!pmx::sample_camera_track(clip.camera, frame, key)) return;
-    const pmx::Quat q = pmx::camera_rot_quat(key.rot);
-    const pmx::Vec3 local{0.0f, 0.0f, -key.distance};
-    const pmx::Vec3 u{q.x, q.y, q.z};
-    const pmx::Vec3 t = pmx::cross(u, local) * 2.0f;
-    const pmx::Vec3 dir = local + t * q.w + pmx::cross(u, t);
-    const pmx::Vec3 offset = dir;
-    const float len = pmx::length(offset);
-    if (len < 1e-4f) return;
-    camera.target = key.target;
-    camera.distance = len;
-    camera.yaw = std::atan2(offset.x, offset.z);
-    camera.pitch = std::asin(std::clamp(offset.y / len, -1.0f, 1.0f));
-    camera.fov = static_cast<float>(key.fov);
-}
-
 void cleanup_target(ExportJob& job) {
     job.target.reset();
     job.rgba.clear();
@@ -53,7 +33,9 @@ void export_job_start(Viewer& v) {
         return;
     }
 
-    const int max_frame = v.timeline.max_frame() > 0 ? v.timeline.max_frame() : 120;
+    // 场景长度取模型动作与相机动作的较长者。
+    const int scene_frames = timeline_max_frame(v);
+    const int max_frame = scene_frames > 0 ? scene_frames : 120;
     job.settings.width = std::clamp(v.output.width, 16, 8192);
     job.settings.height = std::clamp(v.output.height, 16, 8192);
     job.settings.supersample = std::clamp(v.output.supersample, 1, 4);
@@ -128,9 +110,9 @@ void export_job_tick(Viewer& v) {
     job.physics_frame = job.current;
     v.pose->world();
 
+    // 场景相机：有相机动作就按相机轨渲染（与视口是否处于相机视角无关）。
     pmx::OrbitCamera camera = v.camera;
-    if (v.timeline.camera_track && v.timeline.clip)
-        camera_from_track(*v.timeline.clip, job.current, camera);
+    v.camera_motion_orbit_at(static_cast<double>(job.current), camera);
 
     pmx::RenderSettings settings = v.settings;
     settings.show_mesh = true;

@@ -1,13 +1,16 @@
 // 时间线状态与操作：预览模式下编辑 AnimClip 的关键帧。
 //
-// 与 Viewer::motion 的关系：导入 VMD 时由 motion 生成 clip，之后时间线以 clip
-// 为准；未打开时间线时仍走原来的 motion 播放路径。
+// 数据来源有两份，共用同一个播放头：
+//  - timeline.clip      模型动作（骨骼 / 形态 / IK）
+//  - viewer.camera_motion.track  相机动作（独立导入 / 保存 / 清除）
+// 未载入 clip 时模型部分退回 motion 播放路径。
 #pragma once
 
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "app/camera.hpp"
 #include "core/anim.hpp"
 
 struct Viewer;
@@ -26,7 +29,6 @@ struct TimelineState {
     std::string source;
 
     bool enabled = false;       // 底部时间线面板是否展开
-    bool camera_track = false;  // 相机轨接管视角
     bool auto_key = false;      // 拖动骨骼时自动打帧
     bool show_all_tracks = false;
     std::string filter;
@@ -42,9 +44,12 @@ struct TimelineState {
 
     double frame = 0.0;  // 播放头，与 Viewer::motion_frame 双向同步
 
-    int max_frame() const { return clip ? clip->max_frame() : 0; }
-    bool loaded() const { return clip != nullptr; }
+    // 只算模型动作长度；场景长度（含相机动作）用 timeline_max_frame。
+    int model_max_frame() const { return clip ? clip->max_frame() : 0; }
 };
+
+// 时间线总长度：模型动作与相机动作取较长者。
+int timeline_max_frame(const Viewer& v);
 
 // 用当前 motion / motion_binding 重建 clip（导入 VMD 后调用）。
 void timeline_sync_from_motion(Viewer& v);
@@ -56,6 +61,10 @@ void timeline_clear(Viewer& v);
 void timeline_apply_frame(Viewer& v);
 // 当前姿态打关键帧（骨骼 + 形态）。
 void timeline_insert_key(Viewer& v);
+// 把当前视口相机记成相机关键帧（相机视角下 K 走这里）。
+void timeline_insert_camera_key(Viewer& v);
+// 视口相机 -> MMD 相机关键帧（当前帧、当前距离 / 注视点 / FOV）。
+pmx::AnimCameraKey camera_key_from_orbit(const pmx::OrbitCamera& camera, int frame);
 // 选中关键帧的删除 / 平移 / 复制粘贴。
 void timeline_delete_selection(Viewer& v);
 void timeline_move_selection(Viewer& v, int delta_frames);

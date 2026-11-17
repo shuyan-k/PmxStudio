@@ -304,6 +304,16 @@ float VmdCurve::ease(float t) const {
                        clampf(y2, 0.0f, 1.0f), t);
 }
 
+int VmdMotion::model_max_frame() const {
+    int out = 0;
+    for (const VmdBoneTrack& track : bone_tracks)
+        if (!track.keys.empty()) out = std::max(out, track.keys.back().frame);
+    for (const VmdMorphTrack& track : morph_tracks)
+        if (!track.keys.empty()) out = std::max(out, track.keys.back().frame);
+    for (const VmdIkFrame& key : ik_frames) out = std::max(out, key.frame);
+    return std::max(0, out);
+}
+
 VmdMotion load_vmd(const std::string& path) {
     std::ifstream file = open_ifstream(path);
     if (!file) throw std::runtime_error("无法打开 VMD 文件：" + path);

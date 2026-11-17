@@ -182,7 +182,6 @@ void Viewer::set_preview_mode(bool preview) {
         motion_dirty = false;
         // 时间线只属于预览：收起面板并交还视角，clip 保留以便再切回来继续编辑。
         timeline.enabled = false;
-        timeline.camera_track = false;
         if (camera_view) {
             camera_view = false;
             camera = camera_before_view;  // 相机视角下切回编辑时恢复自由视角
@@ -238,15 +237,50 @@ bool Viewer::save_motion_dialog() {
         pick_save_file(kVmdFilter, L"保存 VMD 动作", default_path, L"vmd");
     if (out.empty()) return false;  // 用户取消
     try {
-        const pmx::VmdMotion motion_out =
+        pmx::VmdMotion motion_out =
             (pmx::modules().timeline && timeline.clip)
                 ? pmx::to_vmd(*timeline.clip, pose ? &model : nullptr, out)
                 : (motion ? *motion : pmx::VmdMotion{});
+        // 模型动作与相机动作分开保存：动作 VMD 一律不写相机帧。
+        motion_out.camera_track.clear();
+        motion_out.camera_keys = 0;
         const pmx::VmdExport res = pmx::save_vmd_motion(out, motion_out);
-        status = "已保存 VMD " + res.path + "（" + std::to_string(res.bones) + " 骨骼 / " +
-                 std::to_string(res.morphs) + " 形态）";
+        status = "已保存 VMD 动作 " + res.path + "（" + std::to_string(res.bones) + " 骨骼 / " +
+                 std::to_string(res.morphs) + " 形态 · 不含相机）";
         vmd_path = out;
         motion_dirty_edit = false;
+        error.clear();
+        return true;
+    } catch (const std::exception& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+bool Viewer::save_camera_dialog() {
+    if (!camera_motion.loaded()) {
+        status = "没有可保存的相机动作";
+        return false;
+    }
+    std::string default_path = model_path;
+    if (!default_path.empty()) {
+        const std::size_t dot = default_path.find_last_of('.');
+        const std::size_t slash = default_path.find_last_of("/\\");
+        if (dot != std::string::npos && (slash == std::string::npos || dot > slash))
+            default_path = default_path.substr(0, dot);
+    }
+    if (default_path.empty()) default_path = model.name.empty() ? "camera" : model.name;
+    default_path += ".camera.vmd";
+    const std::string out =
+        pick_save_file(kVmdFilter, L"保存相机 VMD", default_path, L"vmd");
+    if (out.empty()) return false;  // 用户取消
+    try {
+        const pmx::VmdMotion motion_out = pmx::to_vmd_camera(camera_motion.track);
+        const pmx::VmdExport res = pmx::save_vmd_motion(out, motion_out);
+        camera_motion.source = out;
+        camera_motion.dirty = false;
+        status = "已保存相机 VMD " + res.path + "（" +
+                 std::to_string(camera_motion.track.keys.size()) + " 帧 · 只含相机）";
         error.clear();
         return true;
     } catch (const std::exception& e) {

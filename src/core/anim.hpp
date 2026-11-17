@@ -2,7 +2,8 @@
 //
 // 与 VmdMotion 的区别：
 //  - 轨道直接记录绑定到的骨骼 / 形态索引，UI 不必每次重查名称；
-//  - 相机轨、IK 帧是正式成员，可编辑、可增删；
+//  - AnimClip 只表示模型动作（骨骼 / 形态 / IK）；相机动作是独立的 CameraTrack，
+//    同一个 VMD 文件可以同时携带两者，但运行时分开存放；
 //  - 关键帧按帧号排序，同帧唯一（重复插入时覆盖）。
 #pragma once
 
@@ -53,6 +54,19 @@ struct AnimCameraKey {
     bool perspective = true;
 };
 
+// 相机动作：独立于模型动作（骨骼 / 形态）的机位关键帧序列。
+// 同一个 VMD 文件可以同时携带两者，但内存里分开存放、分别导入 / 保存 / 清除。
+struct CameraTrack {
+    std::vector<AnimCameraKey> keys;
+
+    bool empty() const { return keys.empty(); }
+    int max_frame() const;
+    // 按帧号排序，同帧只保留最后一条。
+    void sort_keys();
+    // 插入或覆盖同帧关键帧，返回该帧在轨道内的下标。
+    int set_key(const AnimCameraKey& key);
+};
+
 struct AnimIkState {
     std::string name;
     int bone = -1;
@@ -70,7 +84,6 @@ public:
     std::string name;
     std::vector<AnimBoneTrack> bones;
     std::vector<AnimMorphTrack> morphs;
-    std::vector<AnimCameraKey> camera;
     std::vector<AnimIkKey> ik;
 
     bool empty() const;
@@ -90,12 +103,19 @@ public:
     int set_morph_key(int track_index, const AnimMorphKey& key);
 };
 
-// VMD -> AnimClip：绑定结果写入轨道的 bone / morph，IK 帧解析成骨骼索引。
+// VMD -> AnimClip：只转换模型动作（骨骼 / 形态 / IK），相机帧由
+// camera_track_from_vmd 单独取出，两者互不影响。
 AnimClip from_vmd(const VmdMotion& motion, const VmdBinding& binding);
 
 // AnimClip -> VMD：未匹配的轨道按原名写出，绑定索引只用于补名字。
+// 只写模型动作，相机动作请用 to_vmd_camera。
 VmdMotion to_vmd(const AnimClip& clip, const Model* model = nullptr,
                  const std::string& model_name = std::string());
+
+// 从 VMD 文件内容里取出相机动作（空文件内容返回空轨）。
+CameraTrack camera_track_from_vmd(const VmdMotion& motion);
+// 相机动作 -> 只含相机帧的 VMD（用于保存「相机 VMD」）。
+VmdMotion to_vmd_camera(const CameraTrack& track);
 
 // 采样并写入 pose 的 base_rot / base_trans，形态权重写入 weights。
 // 语义与 evaluate_vmd 一致（不含 IK 求解与形态展开，由调用方完成）。

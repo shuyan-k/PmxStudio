@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/pmx_parity_probe.dir/tests/parity_probe.cpp.o -o pmx_parity_probe  libpmx_core.a libbullet.a 

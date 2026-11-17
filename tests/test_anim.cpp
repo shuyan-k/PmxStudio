@@ -113,7 +113,7 @@ pmx::VmdBinding make_binding(const pmx::VmdMotion& motion) {
     return binding;
 }
 
-void check_motion(const pmx::VmdMotion& motion, const char* tag) {
+void check_motion(const pmx::VmdMotion& motion, const char* tag, bool expect_camera = true) {
     char label[128];
 
     std::snprintf(label, sizeof(label), "%s: 骨骼轨数", tag);
@@ -121,9 +121,9 @@ void check_motion(const pmx::VmdMotion& motion, const char* tag) {
     std::snprintf(label, sizeof(label), "%s: 形态轨数", tag);
     check(motion.morph_tracks.size() == 1, label);
     std::snprintf(label, sizeof(label), "%s: 相机帧数", tag);
-    check(motion.camera_track.size() == 2, label);
+    check(motion.camera_track.size() == (expect_camera ? 2u : 0u), label);
     std::snprintf(label, sizeof(label), "%s: camera_keys", tag);
-    check(motion.camera_keys == 2, label);
+    check(motion.camera_keys == (expect_camera ? 2 : 0), label);
 
     if (motion.bone_tracks.size() == 2) {
         const pmx::VmdBoneTrack& center = motion.bone_tracks[0];
@@ -181,27 +181,33 @@ void test_roundtrip() {
     check(clip.bones.size() == 2 && clip.bones[0].bone == 0 && clip.bones[1].bone == 1,
           "from_vmd 骨骼绑定索引");
     check(clip.morphs.size() == 1 && clip.morphs[0].morph == 0, "from_vmd 形态绑定索引");
-    check(clip.camera.size() == 2, "from_vmd 相机帧数");
 
+    // 相机动作独立于模型动作：from_vmd 不再把相机帧塞进 clip。
+    const pmx::CameraTrack camera = pmx::camera_track_from_vmd(motion);
+    check(camera.keys.size() == 2, "camera_track_from_vmd 相机帧数");
+    check_near(camera.keys[1].distance, 50.5, 1e-5, "相机轨距离");
+    const pmx::VmdMotion camera_vmd = pmx::to_vmd_camera(camera);
+    check(camera_vmd.bone_tracks.empty() && camera_vmd.camera_track.size() == 2,
+          "to_vmd_camera 只写相机帧");
+
+    // 模型动作导出不应带相机帧。
     const pmx::VmdMotion motion2 = pmx::to_vmd(clip);
-    check_motion(motion2, "第一次往返");
+    check_motion(motion2, "第一次往返", false);
 
     const pmx::VmdBinding binding2 = make_binding(motion2);
     const pmx::AnimClip clip2 = pmx::from_vmd(motion2, binding2);
     const pmx::VmdMotion motion3 = pmx::to_vmd(clip2);
-    check_motion(motion3, "第二次往返");
+    check_motion(motion3, "第二次往返", false);
 }
 
 void test_binary() {
     const pmx::VmdMotion motion = make_motion();
-    const pmx::VmdBinding binding = make_binding(motion);
-    const pmx::AnimClip clip = pmx::from_vmd(motion, binding);
-    const pmx::VmdMotion motion2 = pmx::to_vmd(clip);
 
     const std::filesystem::path path =
         std::filesystem::temp_directory_path() / "pmxstudio_anim_test.vmd";
     const std::string path_str = path.string();
-    const pmx::VmdExport exported = pmx::save_vmd_motion(path_str, motion2);
+    // 保存原始 VMD：既验证模型动作，也验证相机帧的二进制读写。
+    const pmx::VmdExport exported = pmx::save_vmd_motion(path_str, motion);
     check(exported.bones == 6 && exported.morphs == 3, "save_vmd_motion 帧计数");
 
     const pmx::VmdMotion loaded = pmx::load_vmd(path_str);

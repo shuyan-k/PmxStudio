@@ -34,7 +34,10 @@ void panel_output(Viewer& v) {
                             v.output.height * v.output.supersample);
 
         ImGui::SeparatorText("范围");
-        const int max_frame = std::max(0, v.timeline.max_frame());
+        const int max_frame = std::max(0, timeline_max_frame(v));
+        ImGui::TextDisabled(v.camera_motion.loaded()
+                                ? "取景：相机动作（独立相机轨）"
+                                : "取景：当前视口相机（没有相机动作）");
         ImGui::SetNextItemWidth(pmxui::scale(-96.0f));
         ImGui::DragInt("起始帧", &v.output.begin, 1.0f, 0, max_frame);
         ImGui::SetNextItemWidth(pmxui::scale(-96.0f));
