@@ -9,6 +9,9 @@
 #include <vector>
 
 #include "app/camera.hpp"
+#include "app/export_job.hpp"
+#include "app/timeline.hpp"
+#include "core/audio.hpp"
 #include "core/morph.hpp"
 #include "core/pmx.hpp"
 #include "core/pose.hpp"
@@ -92,6 +95,30 @@ struct Viewer {
     // 避免 IK 把被旋转骨骼的原点又拉回去。
     std::unordered_set<int> manual_ik_mutes;
 
+    // 退出前是否有未保存的动作编辑（时间线）。与 dirty（模型数据）分开提示。
+    bool motion_dirty_edit = false;
+
+    // 时间线：预览模式下的关键帧编辑状态。未载入 clip 时退回 motion 播放。
+    TimelineState timeline;
+
+    // ---------------------------------------------------------- 输出 / 音频
+    struct OutputSettings {
+        int width = 1920;
+        int height = 1080;
+        int supersample = 1;
+        int begin = 0;
+        int end = 120;
+        int step = 1;
+        int crf = 18;
+        std::string directory;
+        std::string video_path;
+    };
+    OutputSettings output;
+    std::unique_ptr<pmx::AudioTrack> audio;
+    std::string audio_path;
+    float audio_offset = 0.0f;  // 音频与动作的偏移校准（秒）
+    ExportJob export_job;
+
     bool physics_enabled = false;
     float gravity = -9.8f;
     int iterations = 30;
@@ -108,6 +135,8 @@ struct Viewer {
     bool close_requested = false;
     // 保存当前模型；路径为空或 always_ask 时弹文件对话框。取消 / 失败返回 false。
     bool save_model_dialog(bool always_ask);
+    // 保存当前动作（时间线 clip 或导入的 VMD）。成功会清掉 motion_dirty_edit。
+    bool save_motion_dialog();
     void draw_close_confirm();
 
     double fps_time = 0.0;
@@ -172,7 +201,11 @@ struct Viewer {
     bool load_vmd_file(const std::string& path, std::string* err);
     void clear_motion();
     void update_motion(float dt);
+    // 音频跟随动作播放：按 motion_frame / 30 + audio_offset 对齐，暂停时停播。
+    void sync_audio();
     void apply_motion_frame();
+    // 相机轨接管视角：把当前帧的相机关键帧换算成轨道相机参数。
+    void apply_timeline_camera();
     // 记住被手动摆过的骨骼：播放时用这里的值覆盖 VMD 轨道。
     void remember_manual_pose(int bone);
     void clear_manual_pose();

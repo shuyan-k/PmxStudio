@@ -100,6 +100,21 @@ std::string read_name_field(Reader& r, std::size_t width) {
     return trim_name(decode_text_name(text));
 }
 
+// 相机插值表 24 字节：4 行（X1/Y1/X2/Y2）× 6 列（X/Y/Z/旋转/距离/FOV）。
+// 只取前四列，距离与 FOV 两列不参与采样。
+std::array<VmdCurve, 4> read_camera_curves(const std::uint8_t* ip) {
+    std::array<VmdCurve, 4> curves;
+    for (int axis = 0; axis < 4; ++axis) {
+        VmdCurve c;
+        c.x1 = static_cast<float>(ip[axis]) / 127.0f;
+        c.y1 = static_cast<float>(ip[6 + axis]) / 127.0f;
+        c.x2 = static_cast<float>(ip[12 + axis]) / 127.0f;
+        c.y2 = static_cast<float>(ip[18 + axis]) / 127.0f;
+        curves[static_cast<std::size_t>(axis)] = c;
+    }
+    return curves;
+}
+
 // 64 字节插值表：前 16 字节是 4×4 表格（行 X1/Y1/X2/Y2，列 X/Y/Z/旋转），其余为副本。
 std::array<VmdCurve, 4> read_curves(const std::uint8_t* ip) {
     std::array<VmdCurve, 4> curves;
@@ -179,11 +194,17 @@ void sort_keys(VmdMotion& motion) {
                          [](const VmdMorphKey& a, const VmdMorphKey& b) {
                              return a.frame < b.frame;
                          });
+    std::stable_sort(motion.camera_track.begin(), motion.camera_track.end(),
+                     [](const VmdCameraKey& a, const VmdCameraKey& b) {
+                         return a.frame < b.frame;
+                     });
     int max_frame = 0;
     for (const VmdBoneTrack& track : motion.bone_tracks)
         if (!track.keys.empty()) max_frame = std::max(max_frame, track.keys.back().frame);
     for (const VmdMorphTrack& track : motion.morph_tracks)
         if (!track.keys.empty()) max_frame = std::max(max_frame, track.keys.back().frame);
+    for (const VmdCameraKey& key : motion.camera_track)
+        max_frame = std::max(max_frame, key.frame);
     motion.max_frame = std::max(0, max_frame);
 }
 
@@ -228,6 +249,43 @@ std::array<std::uint8_t, 64> default_interpolation() {
     // 其余 48 字节是前 16 字节的副本。
     for (int i = 16; i < 64; ++i)
         ip[static_cast<std::size_t>(i)] = ip[static_cast<std::size_t>(i - 16)];
+    return ip;
+}
+
+std::uint8_t encode_curve_value(float v) {
+    return static_cast<std::uint8_t>(std::lround(clampf(v, 0.0f, 1.0f) * 127.0f));
+}
+
+// 骨骼 4×4 插值表（行 X1/Y1/X2/Y2，列 X/Y/Z/旋转），其余 48 字节复制前 16。
+std::array<std::uint8_t, 64> interpolation_from_curves(const std::array<VmdCurve, 4>& curves) {
+    std::array<std::uint8_t, 64> ip{};
+    for (int axis = 0; axis < 4; ++axis) {
+        const VmdCurve& c = curves[static_cast<std::size_t>(axis)];
+        ip[static_cast<std::size_t>(axis)] = encode_curve_value(c.x1);
+        ip[static_cast<std::size_t>(4 + axis)] = encode_curve_value(c.y1);
+        ip[static_cast<std::size_t>(8 + axis)] = encode_curve_value(c.x2);
+        ip[static_cast<std::size_t>(12 + axis)] = encode_curve_value(c.y2);
+    }
+    for (int i = 16; i < 64; ++i)
+        ip[static_cast<std::size_t>(i)] = ip[static_cast<std::size_t>(i - 16)];
+    return ip;
+}
+
+// 相机 4×6 插值表；距离与 FOV 两列固定用线性 20/20/107/107。
+std::array<std::uint8_t, 24> camera_interpolation(const std::array<VmdCurve, 4>& curves) {
+    std::array<std::uint8_t, 24> ip{};
+    for (int axis = 0; axis < 4; ++axis) {
+        const VmdCurve& c = curves[static_cast<std::size_t>(axis)];
+        ip[static_cast<std::size_t>(axis)] = encode_curve_value(c.x1);
+        ip[static_cast<std::size_t>(6 + axis)] = encode_curve_value(c.y1);
+        ip[static_cast<std::size_t>(12 + axis)] = encode_curve_value(c.x2);
+        ip[static_cast<std::size_t>(18 + axis)] = encode_curve_value(c.y2);
+    }
+    const std::uint8_t linear[4] = {20, 20, 107, 107};
+    for (int row = 0; row < 4; ++row) {
+        ip[static_cast<std::size_t>(row * 6 + 4)] = linear[row];
+        ip[static_cast<std::size_t>(row * 6 + 5)] = linear[row];
+    }
     return ip;
 }
 
@@ -331,15 +389,28 @@ VmdMotion load_vmd(const std::string& path) {
             VmdMorphKey{static_cast<int>(frame_raw), weight});
     }
 
-    // 相机 / 光照 / 阴影 / 表示枠(IK) 帧。相机只统计帧数。
+    // 相机 / 光照 / 阴影 / 表示枠(IK) 帧。
     if (r.remaining(4)) {
         const std::uint32_t camera_count = r.u32("相机帧数");
+        motion.camera_keys = static_cast<int>(camera_count);
         if (camera_count <= data.size() / 61) {
-            motion.camera_keys = static_cast<int>(camera_count);
-            const std::size_t bytes = static_cast<std::size_t>(camera_count) * 61;
-            if (r.remaining(bytes)) r.skip(bytes, "相机帧");
-        } else {
-            motion.camera_keys = static_cast<int>(camera_count);
+            motion.camera_track.reserve(camera_count);
+            for (std::uint32_t i = 0; i < camera_count; ++i) {
+                if (!r.remaining(61)) break;
+                VmdCameraKey key;
+                key.frame = static_cast<int>(r.u32("相机帧号"));
+                key.distance = r.f32("相机距离");
+                key.target = Vec3{r.f32("相机注视点"), r.f32("相机注视点"),
+                                  r.f32("相机注视点")};
+                key.rot = Vec3{r.f32("相机旋转"), r.f32("相机旋转"), r.f32("相机旋转")};
+                const std::string ip_bytes = r.raw(24, "相机插值曲线");
+                std::array<std::uint8_t, 24> ip{};
+                std::memcpy(ip.data(), ip_bytes.data(), 24);
+                key.curve = read_camera_curves(ip.data());
+                key.fov = static_cast<int>(r.u32("相机视野"));
+                key.perspective = static_cast<std::int8_t>(r.raw(1, "透视")[0]) != 0;
+                motion.camera_track.push_back(key);
+            }
         }
     }
 
@@ -619,6 +690,92 @@ VmdExport save_vmd(const std::string& path, const Model& model, const Pose& pose
     result.bones = static_cast<int>(entries.size());
     result.morphs = static_cast<int>(morphs.size());
     result.frame = frame;
+    return result;
+}
+
+VmdExport save_vmd_motion(const std::string& path, const VmdMotion& motion) {
+    std::size_t bone_frames = 0;
+    for (const VmdBoneTrack& track : motion.bone_tracks) bone_frames += track.keys.size();
+    std::size_t morph_frames = 0;
+    for (const VmdMorphTrack& track : motion.morph_tracks) morph_frames += track.keys.size();
+
+    std::string payload;
+    payload.reserve(30 + 20 + 4 + bone_frames * 111 + 4 + morph_frames * 23 + 4 +
+                    motion.camera_track.size() * 61 + 8 + 4 +
+                    motion.ik_frames.size() * 9 +
+                    (bone_frames + morph_frames) * 20);
+    std::string header = "Vocaloid Motion Data 0002";
+    header.append(30 - header.size(), '\0');
+    payload += header;
+    put_name_field(payload, motion.model_name, 20);
+
+    put_u32(payload, static_cast<std::uint32_t>(bone_frames));
+    for (const VmdBoneTrack& track : motion.bone_tracks) {
+        for (const VmdBoneKey& key : track.keys) {
+            put_name_field(payload, track.name, 15);
+            put_u32(payload, static_cast<std::uint32_t>(std::max(0, key.frame)));
+            put_f32(payload, key.pos.x);
+            put_f32(payload, key.pos.y);
+            put_f32(payload, key.pos.z);
+            put_f32(payload, key.rot.x);
+            put_f32(payload, key.rot.y);
+            put_f32(payload, key.rot.z);
+            put_f32(payload, key.rot.w);
+            const std::array<std::uint8_t, 64> ip = interpolation_from_curves(key.curve);
+            payload.append(reinterpret_cast<const char*>(ip.data()), ip.size());
+        }
+    }
+
+    put_u32(payload, static_cast<std::uint32_t>(morph_frames));
+    for (const VmdMorphTrack& track : motion.morph_tracks) {
+        for (const VmdMorphKey& key : track.keys) {
+            put_name_field(payload, track.name, 15);
+            put_u32(payload, static_cast<std::uint32_t>(std::max(0, key.frame)));
+            put_f32(payload, key.weight);
+        }
+    }
+
+    put_u32(payload, static_cast<std::uint32_t>(motion.camera_track.size()));
+    for (const VmdCameraKey& key : motion.camera_track) {
+        put_u32(payload, static_cast<std::uint32_t>(std::max(0, key.frame)));
+        put_f32(payload, key.distance);
+        put_f32(payload, key.target.x);
+        put_f32(payload, key.target.y);
+        put_f32(payload, key.target.z);
+        put_f32(payload, key.rot.x);
+        put_f32(payload, key.rot.y);
+        put_f32(payload, key.rot.z);
+        const std::array<std::uint8_t, 24> ip = camera_interpolation(key.curve);
+        payload.append(reinterpret_cast<const char*>(ip.data()), ip.size());
+        put_u32(payload, static_cast<std::uint32_t>(std::max(0, key.fov)));
+        payload.push_back(key.perspective ? '\1' : '\0');
+    }
+
+    // 光照 / 自阴影轨道：无内容。
+    put_u32(payload, 0);
+    put_u32(payload, 0);
+
+    put_u32(payload, static_cast<std::uint32_t>(motion.ik_frames.size()));
+    for (const VmdIkFrame& frame : motion.ik_frames) {
+        put_u32(payload, static_cast<std::uint32_t>(std::max(0, frame.frame)));
+        payload.push_back(frame.visible ? '\1' : '\0');
+        put_u32(payload, static_cast<std::uint32_t>(frame.states.size()));
+        for (const VmdIkState& state : frame.states) {
+            put_name_field(payload, state.bone, 20);
+            payload.push_back(state.enabled ? '\1' : '\0');
+        }
+    }
+
+    std::ofstream file = open_ofstream(path);
+    if (!file) throw std::runtime_error("无法写入 VMD：" + path);
+    file.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    if (!file) throw std::runtime_error("写入 VMD 失败：" + path);
+
+    VmdExport result;
+    result.path = path;
+    result.bones = static_cast<int>(bone_frames);
+    result.morphs = static_cast<int>(morph_frames);
+    result.frame = motion.max_frame;
     return result;
 }
 

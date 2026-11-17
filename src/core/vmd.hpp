@@ -58,6 +58,17 @@ struct VmdIkFrame {
     std::vector<VmdIkState> states;
 };
 
+// 相机帧（61 字节）：注视点 + 距离 + 欧拉角 + FOV。MMD 的插值表只用前四段。
+struct VmdCameraKey {
+    int frame = 0;
+    float distance = 45.0f;
+    Vec3 target{};
+    Vec3 rot{};
+    std::array<VmdCurve, 4> curve{};
+    int fov = 30;
+    bool perspective = true;
+};
+
 struct VmdMotion {
     std::string source;
     std::string version = "0002";
@@ -66,10 +77,14 @@ struct VmdMotion {
     std::vector<VmdMorphTrack> morph_tracks;
     // 表示枠 / IK 帧（按帧号升序）。
     std::vector<VmdIkFrame> ik_frames;
-    int camera_keys = 0;
+    // 相机轨（按帧号升序）；为空表示动作没有相机数据。
+    std::vector<VmdCameraKey> camera_track;
+    int camera_keys = 0;  // 文件里声明的相机帧数（即使解析失败也保留）
     int max_frame = 0;
 
-    bool empty() const { return bone_tracks.empty() && morph_tracks.empty(); }
+    bool empty() const {
+        return bone_tracks.empty() && morph_tracks.empty() && camera_track.empty();
+    }
 };
 
 // 把动作轨道绑定到模型骨骼 / 形态索引；未匹配项保留名称供界面提示。
@@ -106,5 +121,8 @@ VmdExport save_vmd(const std::string& path, const Model& model, const Pose& pose
                    const MorphWeights* morph_weights = nullptr,
                    const std::string& model_name = std::string(),
                    bool include_all = false, int frame = 0);
+
+// 按 VmdMotion 的全部轨道（骨骼 / 形态 / 相机 / IK）写出多帧 VMD。
+VmdExport save_vmd_motion(const std::string& path, const VmdMotion& motion);
 
 }  // namespace pmx

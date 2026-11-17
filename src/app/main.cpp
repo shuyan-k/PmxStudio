@@ -36,8 +36,11 @@
 #include <vector>
 
 #include "app/camera.hpp"
+#include "app/modules.hpp"
 #include "app/panels.hpp"
+#include "app/profiler.hpp"
 #include "app/theme.hpp"
+#include "app/timeline.hpp"
 #include "app/ui_scale.hpp"
 #include "app/viewer.hpp"
 #include "core/fs.hpp"
@@ -157,6 +160,7 @@ bool Viewer::load_model(const std::string& path, std::string* err) {
     motion_playing = false;
     motion_dirty = false;
     vmd_path.clear();
+    timeline_clear(*this);
     clear_manual_pose();
     select(SelKind::None, -1);
     undo_stack.clear();
@@ -401,6 +405,19 @@ void Viewer::handle_shortcuts() {
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F, false) && !io.KeyCtrl) fit_camera();
     if (ImGui::IsKeyPressed(ImGuiKey_R, false) && !io.KeyCtrl) reset_pose();
+    // Ctrl+T：展开 / 收起底部时间线；K：把当前姿态打成关键帧。
+    if (pmx::modules().timeline && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_T, false)) {
+        if (!preview_mode) {
+            status = "时间线只在预览模式使用（Ctrl+M）";
+        } else {
+            timeline.enabled = !timeline.enabled;
+            if (timeline.enabled && !timeline.clip && motion) timeline_sync_from_motion(*this);
+        }
+    }
+    if (pmx::modules().timeline && preview_mode && !io.KeyCtrl && timeline.enabled &&
+        ImGui::IsKeyPressed(ImGuiKey_K, false)) {
+        timeline_insert_key(*this);
+    }
     if (ImGui::IsKeyPressed(ImGuiKey_P, false) && !io.KeyCtrl) {
         physics_enabled = !physics_enabled;
         reset_physics();
@@ -416,6 +433,9 @@ void Viewer::handle_shortcuts() {
         const bool ctrl_s = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false);
         // Ctrl+S 覆盖保存，Ctrl+Shift+S 另存为；与菜单保存走同一入口。
         if (ctrl_s) save_model_dialog(io.KeyShift);
+    } else if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        // 预览模式下 Ctrl+S 保存动作（时间线关键帧 / 导入的 VMD）。
+        save_motion_dialog();
     }
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) {
         const std::string path = pick_open_file(kPmxFilter, L"打开 PMX 模型");
@@ -566,6 +586,10 @@ void Viewer::handle_input(GLFWwindow* window, int fb_w, int fb_h) {
             pose->solve_ik();
             pose->world();
             status = "姿态已更新";
+            // 自动关键：拖完骨骼立刻把当前姿态写进时间线（与 MMD 的自动打帧一致）。
+            if (drag_moved && preview_mode && timeline.auto_key && timeline.clip &&
+                pmx::modules().timeline && timeline.enabled)
+                timeline_insert_key(*this);
         }
         drag_mode = DRAG_NONE;
         drag_bone = -1;
@@ -698,6 +722,8 @@ void Viewer::draw_ui() {
             const bool can_edit = pose != nullptr && !preview_mode;
             if (ImGui::MenuItem("保存", "Ctrl+S", false, can_edit)) save();
             if (ImGui::MenuItem("另存为…", "Ctrl+Shift+S", false, can_edit)) save_as();
+            if (ImGui::MenuItem("保存动作 (VMD)…", "Ctrl+S", false, can_pose_file))
+                save_motion_dialog();
             ImGui::Separator();
             if (ImGui::MenuItem("导出 VPD…", nullptr, false, can_edit)) export_vpd();
             if (ImGui::MenuItem("导出 VMD…", nullptr, false, can_edit)) export_vmd();
@@ -705,7 +731,7 @@ void Viewer::draw_ui() {
             ImGui::Separator();
             if (ImGui::MenuItem("退出", "Alt+F4")) {
                 // 有未保存修改时先弹确认框，由 draw_close_confirm 决定是否真的退出。
-                if (dirty) {
+                if (dirty || motion_dirty_edit) {
                     close_requested = true;
                 } else if (GLFWwindow* current = glfwGetCurrentContext()) {
                     glfwSetWindowShouldClose(current, 1);
@@ -914,9 +940,13 @@ void Viewer::draw_ui() {
             }
         };
         if (preview_mode) {
-            // 预览模式只保留控制类标签：检索、动作、物理开关、形态、设置。
+            // 预览模式只保留控制类标签：检索、动作、时间线、物理开关、形态、设置。
             tab("检索", &panel_preview_search);
             tab("动作", &panel_motion);
+            if (pmx::modules().timeline) tab("时间线", &panel_timeline);
+            if (pmx::modules().bake) tab("烘焙", &panel_bake);
+            if (pmx::modules().render_output || pmx::modules().audio)
+                tab("输出", &panel_output);
             tab("物理", &panel_preview_physics);
             tab("形态", &panel_preview_morph);
             tab("设置", &panel_settings);
@@ -944,6 +974,14 @@ void Viewer::draw_ui() {
 
 void Viewer::draw_close_confirm() {
     if (!close_requested) return;
+    const bool model_unsaved = dirty;
+    const bool motion_unsaved = motion_dirty_edit;
+    if (!model_unsaved && !motion_unsaved) {
+        close_requested = false;
+        if (GLFWwindow* current = glfwGetCurrentContext())
+            glfwSetWindowShouldClose(current, 1);
+        return;
+    }
     const char* title = "未保存的修改###pmx_close_confirm";
     if (!ImGui::IsPopupOpen(title)) {
         ImGui::OpenPopup(title);
@@ -951,18 +989,35 @@ void Viewer::draw_close_confirm() {
                                 ImVec2(0.5f, 0.5f));
     }
     if (ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("模型有未保存的修改。");
+        if (model_unsaved) ImGui::TextUnformatted("模型有未保存的修改。");
+        if (motion_unsaved) ImGui::TextUnformatted("动作（时间线 / VMD）有未保存的修改。");
         ImGui::TextDisabled("退出后这些修改会丢失。");
         ImGui::Separator();
         const float w = pmxui::scale(88.0f);
-        if (ImGui::Button("保存并退出", ImVec2(w, 0))) {
-            if (save_model_dialog(false)) {
+        if (ImGui::Button("全部保存并退出", ImVec2(w, 0))) {
+            bool ok = true;
+            if (model_unsaved) ok = save_model_dialog(false);
+            if (ok && motion_unsaved) ok = save_motion_dialog();
+            if (ok) {
                 close_requested = false;
                 ImGui::CloseCurrentPopup();
                 if (GLFWwindow* current = glfwGetCurrentContext())
                     glfwSetWindowShouldClose(current, 1);
             } else {
                 status = "保存未完成（已取消或保存失败），仍停留在编辑器中";
+            }
+        }
+        if (motion_unsaved) {
+            ImGui::SameLine();
+            if (ImGui::Button("只保存动作", ImVec2(w, 0))) {
+                if (save_motion_dialog()) {
+                    close_requested = false;
+                    ImGui::CloseCurrentPopup();
+                    if (GLFWwindow* current = glfwGetCurrentContext())
+                        glfwSetWindowShouldClose(current, 1);
+                } else {
+                    status = "动作保存未完成（已取消或保存失败），仍停留在编辑器中";
+                }
             }
         }
         ImGui::SameLine();
@@ -1069,6 +1124,12 @@ bool Viewer::load_vmd_file(const std::string& path, std::string* err) {
         motion_playing = motion->max_frame > 0;
         motion_dirty = true;
         vmd_path = path;
+        // 时间线以 clip 为编辑对象；导入时同步一份，之后两者保持一致。
+        if (pmx::modules().timeline) {
+            timeline_sync_from_motion(*this);
+            timeline.enabled = true;
+            motion_dirty_edit = false;
+        }
         clear_manual_pose();
         apply_motion_frame();  // 先落到第 0 帧，物理复位也以该帧为初始姿态
 #ifdef PMX_ENABLE_PHYSICS
@@ -1095,15 +1156,22 @@ void Viewer::clear_motion() {
     motion_playing = false;
     motion_dirty = false;
     vmd_path.clear();
+    timeline_clear(*this);
     clear_manual_pose();
     status = "已清除 VMD 动作";
     if (physics_enabled) settle_physics();
 }
 
 void Viewer::apply_motion_frame() {
-    if (!motion || !pose) return;
+    if (!pose) return;
+    // 时间线载入后以 clip 为准：两者初始内容一致，之后编辑只改 clip。
+    const bool use_clip = pmx::modules().timeline && preview_mode && timeline.clip;
+    if (!use_clip && !motion) return;
     pmx::MorphWeights weights;
-    pmx::evaluate_vmd(*motion, motion_binding, motion_frame, *pose, &weights);
+    if (use_clip)
+        pmx::evaluate_clip(*timeline.clip, motion_frame, *pose, &weights);
+    else
+        pmx::evaluate_vmd(*motion, motion_binding, motion_frame, *pose, &weights);
     // 只取消被手动摆过的那几根骨骼：evaluate_vmd 会整体 reset，这里把手动值写回去。
     if (!motion_muted_bones.empty()) {
         for (int b : motion_muted_bones) {
@@ -1131,13 +1199,16 @@ void Viewer::apply_motion_frame() {
 }
 
 void Viewer::update_motion(float dt) {
-    if (!motion || !pose) return;
+    const bool use_clip = pmx::modules().timeline && timeline.clip != nullptr;
+    if ((!motion && !use_clip) || !pose) return;
     // VMD 动作只在预览模式（PmxEditor 的 TransformView）使用；编辑模式始终显示
     // 模型原始姿态，避免动作覆盖与物理回写混进数据编辑视图。
     if (!preview_mode) return;
     bool jumped = false;
     if (motion_playing) {
-        const float end = static_cast<float>(std::max(0, motion->max_frame));
+        const int last_frame =
+            use_clip ? timeline.clip->max_frame() : std::max(0, motion->max_frame);
+        const float end = static_cast<float>(last_frame);
         // VMD 帧号按 30 fps 计；单帧 dt 上限 0.1s，避免拖动窗口后跳帧。
         float next = motion_frame + std::min(dt, 0.1f) * 30.0f * motion_speed;
         if (end <= 0.0f) {
@@ -1158,9 +1229,58 @@ void Viewer::update_motion(float dt) {
         apply_motion_frame();
         motion_dirty = false;
     }
+    timeline.frame = motion_frame;
+    if (pmx::modules().timeline) apply_timeline_camera();
     // 循环回绕会把姿态从末帧瞬移到首帧。MMD / Blender 播放时不会重摆刚体，
     // 这里只清速度：重摆会把几十节的袖链瞬间扯断，之后就被甩飞。
     if (jumped) settle_physics();
+}
+
+void Viewer::sync_audio() {
+    if (!audio || !audio->loaded()) return;
+    const bool use_clip = pmx::modules().timeline && timeline.clip != nullptr;
+    const bool should_play =
+        preview_mode && motion_playing && (motion != nullptr || use_clip);
+    if (!should_play) {
+        if (audio->playing()) audio->stop();
+        return;
+    }
+    const double target = static_cast<double>(motion_frame) / 30.0 + audio_offset;
+    if (target < 0.0) {
+        if (audio->playing()) audio->stop();
+        return;
+    }
+    if (target >= audio->duration()) {
+        if (audio->playing()) audio->stop();
+        return;
+    }
+    // 正常播放时位置由设备自行推进；只在明显偏离时重新对齐（首播 / 回绕 / 跳帧）。
+    if (!audio->playing() || std::fabs(audio->position() - target) > 0.15) {
+        audio->play(target);
+    }
+}
+
+void Viewer::apply_timeline_camera() {
+    if (!timeline.camera_track || !timeline.clip || timeline.clip->camera.empty()) return;
+    pmx::AnimCameraKey key;
+    if (!pmx::sample_camera_track(timeline.clip->camera, motion_frame, key)) return;
+    // MMD 相机：注视点 + 欧拉旋转 + 距离；换算成轨道相机的 yaw / pitch。
+    const pmx::Quat q = pmx::camera_rot_quat(key.rot);
+    const pmx::Vec3 local{0.0f, 0.0f, -key.distance};
+    // 用四元数旋转 (0,0,-distance) 得到相对注视点的偏移。
+    const pmx::Vec3 u{q.x, q.y, q.z};
+    const pmx::Vec3 t = pmx::cross(u, local) * 2.0f;
+    const pmx::Vec3 dir =
+        local + t * q.w + pmx::cross(u, t);
+    const pmx::Vec3 eye = key.target + dir;
+    const pmx::Vec3 offset = eye - key.target;
+    const float len = pmx::length(offset);
+    if (len < 1e-4f) return;
+    camera.target = key.target;
+    camera.distance = len;
+    camera.yaw = std::atan2(offset.x, offset.z);
+    camera.pitch = std::asin(std::clamp(offset.y / len, -1.0f, 1.0f));
+    camera.fov = static_cast<float>(key.fov);
 }
 
 void on_drop(GLFWwindow* window, int count, const char** paths) {
@@ -1300,7 +1420,7 @@ static int run_viewer(const std::vector<std::string>& args) {
     // 点窗口关闭按钮 / Alt+F4 时若模型有未保存修改，先拦下关闭请求并弹确认框。
     glfwSetWindowCloseCallback(window, [](GLFWwindow* w) {
         auto* v = static_cast<Viewer*>(glfwGetWindowUserPointer(w));
-        if (v && v->dirty) {
+        if (v && (v->dirty || v->motion_dirty_edit)) {
             glfwSetWindowShouldClose(w, GLFW_FALSE);
             v->close_requested = true;
         }
@@ -1403,7 +1523,23 @@ static int run_viewer(const std::vector<std::string>& args) {
 
         viewer.handle_shortcuts();
         viewer.handle_input(window, fb_w, fb_h);
+        pmx::ProfileTimer frame_timer(pmx::ProfileScope::Frame);
+        const float motion_before = viewer.motion_frame;
         viewer.update_motion(ImGui::GetIO().DeltaTime);
+        if (pmx::modules().audio) viewer.sync_audio();
+
+        // 物理按动画时间推进：播放时跟动作帧差同步，暂停时按真实时间自然下垂。
+        // 拖帧 / 回绕会造成大跳变，此时只清累加器不做追帧，避免布料被甩飞。
+        float physics_dt = ImGui::GetIO().DeltaTime;
+        bool physics_seek = false;
+        if (viewer.motion_playing) {
+            const float delta_frames = viewer.motion_frame - motion_before;
+            if (delta_frames > 0.0f && delta_frames <= 2.0f) {
+                physics_dt = delta_frames / 30.0f;
+            } else if (delta_frames != 0.0f) {
+                physics_seek = true;
+            }
+        }
 
         if (viewer.pose) {
             if (viewer.morph_dirty) viewer.apply_morphs();
@@ -1411,21 +1547,42 @@ static int run_viewer(const std::vector<std::string>& args) {
             // IK 与物理只在预览模式求值：编辑模式（PmxEditor 的 PmxView）只画模型
             // 原始姿态，姿态覆盖与物理回写都不会混进数据编辑视图。
             if (viewer.preview_mode) {
-                viewer.pose->solve_ik();
+                {
+                    pmx::ProfileTimer ik_timer(pmx::ProfileScope::Ik);
+                    viewer.pose->solve_ik();
+                }
 #ifdef PMX_ENABLE_PHYSICS
-                if (viewer.physics_ptr && viewer.physics_ptr->enabled) {
-                    viewer.physics_ptr->step(*viewer.pose, 1.0f / 60.0f,
-                                             &viewer.morph_weights);
+                if (viewer.physics_ptr && viewer.physics_ptr->enabled &&
+                    !viewer.export_job.active) {
+                    pmx::ProfileTimer physics_timer(pmx::ProfileScope::Physics);
+                    // 手动拖骨骼时只跑一个子步，让反馈跟手而不是追帧。
+                    const bool dragging = viewer.drag_mode == Viewer::DRAG_MOVE ||
+                                          viewer.drag_mode == Viewer::DRAG_ROTATE;
+                    viewer.physics_ptr->set_max_substeps(dragging ? 1 : 10);
+                    if (physics_seek) viewer.physics_ptr->reset_accumulator();
+                    viewer.physics_ptr->advance(*viewer.pose, physics_dt,
+                                                &viewer.morph_weights);
                 }
 #endif
             }
             viewer.pose->world();
         }
 
-        viewer.draw_scene(fb_w, fb_h);
-        viewer.draw_ui();
-        viewer.draw_close_confirm();
-        viewer.draw_pick_choices();  // 双击候选框画在最上层
+        {
+            pmx::ProfileTimer skin_timer(pmx::ProfileScope::Skin);
+            viewer.draw_scene(fb_w, fb_h);
+        }
+        {
+            pmx::ProfileTimer ui_timer(pmx::ProfileScope::Ui);
+            viewer.draw_ui();
+            if (pmx::modules().timeline)
+                draw_timeline_panel(viewer);  // 底部 dope sheet，盖在视口下缘
+            viewer.draw_close_confirm();
+            viewer.draw_pick_choices();  // 双击候选框画在最上层
+            export_job_draw(viewer);     // 导出进度窗
+        }
+        export_job_tick(viewer);
+        pmx::Profiler::instance().tick();
 
         static std::string last_title;
         const std::string title = viewer.window_title();

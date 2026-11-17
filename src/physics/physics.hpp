@@ -52,6 +52,17 @@ public:
     // weights 用于回写后重新叠加骨骼形态（与 Python 版 pose.apply 语义一致）。
     void step(Pose& pose, float dt, const MorphWeights* weights = nullptr);
 
+    // 帧率无关推进：按固定 1/120 秒累加，单次调用最多执行 8 个子步；
+    // 超出部分直接丢弃，避免卡顿后追帧把布料甩飞。
+    void advance(Pose& pose, double dt_seconds, const MorphWeights* weights = nullptr);
+    // step() 内 stepSimulation 的最大子步数（默认 10）。
+    void set_max_substeps(int n);
+    // 丢弃尚未消费的累加时间（复位 / 回绕 / 开始烘焙时调用）。
+    void reset_accumulator();
+
+    // Bullet 世界是否已构建（烘焙前的合法性检查）。
+    bool has_world() const { return world_ != nullptr; }
+
     const std::vector<int>& bone_of_body() const { return bone_of_body_; }
     const std::vector<int>& body_mode() const { return modes_; }
     std::vector<int> dynamic_bones() const;
@@ -91,6 +102,8 @@ private:
     std::vector<Vec3> body_positions_;
     std::vector<Quat> body_rotations_;
     std::vector<Vec3> last_step_positions_;
+    int max_substeps_ = 10;
+    double accumulator_ = 0.0;
     bool soft_active_ = false;
     std::vector<int> soft_indices_;
     std::vector<Vec3> soft_positions_;

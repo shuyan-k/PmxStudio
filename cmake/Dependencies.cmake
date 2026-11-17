@@ -20,6 +20,8 @@ function(pmx_fetch NAME REPO TAG)
 endfunction()
 
 # ---------------------------------------------------------------- GLFW 3.4
+# 无界面构建（-DPMX_BUILD_APP=OFF，如 CI / 沙箱只跑核心与 CLI）不需要 GLFW / ImGui。
+if(PMX_BUILD_APP)
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -62,6 +64,7 @@ target_include_directories(imgui PUBLIC
     ${IMGUI_DIR}/backends)
 target_compile_definitions(imgui PUBLIC GLFW_INCLUDE_NONE)
 target_link_libraries(imgui PUBLIC glfw)
+endif()  # PMX_BUILD_APP
 
 # ---------------------------------------------------------------- stb_image
 if(EXISTS "${PMX_THIRD_PARTY}/stb/stb_image.h")

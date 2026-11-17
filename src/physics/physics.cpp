@@ -42,9 +42,11 @@ Vec3 from_bt(btVector3 v) { return Vec3(v.x(), v.y(), v.z()); }
 // 实物的 1/10）。倍数必须一致，否则布料会变得极「飘」：重力太小，约束和接触的
 // 残余冲量就足以把它顶在半空，看起来就是衣服自己飞起来。
 const float kGravityScale = 10.0f;
-// MMD 的物理固定步长是 1/120，每帧最多 10 个子步。
+// MMD 的物理固定步长是 1/120。
 const float kPhysicsFps = 120.0f;
-const int kMaxSubSteps = 10;
+// advance() 的固定子步：单次调用最多推进 8 步，剩余时间清零（不追帧）。
+const double kAdvanceStep = 1.0 / 120.0;
+const int kAdvanceMaxSubSteps = 8;
 
 // 6DOF 限位：把「锁死在某非零值」的轴改为锁定在静止位。部分胸部 / 裙摆模板
 // 写了同值非零端点（例如 y=0.05），若原样交给 Bullet，约束会在静止姿态就要求
@@ -500,7 +502,27 @@ btRigidBody* Physics::rigid_body(int rigid_index) const {
     return world_->bodies[static_cast<std::size_t>(bi)];
 }
 
+void Physics::set_max_substeps(int n) { max_substeps_ = n > 0 ? n : 1; }
+
+void Physics::reset_accumulator() { accumulator_ = 0.0; }
+
+void Physics::advance(Pose& pose, double dt_seconds, const MorphWeights* weights) {
+    if (!std::isfinite(dt_seconds) || dt_seconds <= 0.0) return;
+    accumulator_ += dt_seconds;
+    int steps = static_cast<int>(accumulator_ / kAdvanceStep);
+    if (steps <= 0) return;
+    if (steps > kAdvanceMaxSubSteps) {
+        // 卡顿后不追帧：只补 8 步，多出来的时间直接丢弃。
+        steps = kAdvanceMaxSubSteps;
+        accumulator_ = 0.0;
+    } else {
+        accumulator_ -= steps * kAdvanceStep;
+    }
+    for (int i = 0; i < steps; ++i) step(pose, static_cast<float>(kAdvanceStep), weights);
+}
+
 void Physics::clear_velocities() {
+    accumulator_ = 0.0;
     if (!world_) return;
     for (auto* b : world_->bodies) {
         b->clearForces();
@@ -510,6 +532,7 @@ void Physics::clear_velocities() {
 }
 
 void Physics::reset(Pose& pose, const MorphWeights* weights, bool warmup) {
+    accumulator_ = 0.0;
     if (!world_) return;
     pose.clear_overrides();
     pose.apply(weights);
@@ -547,7 +570,8 @@ void Physics::reset(Pose& pose, const MorphWeights* weights, bool warmup) {
 
     if (warmup && warmup_steps > 0) {
         for (int k = 0; k < warmup_steps; ++k)
-            world_->world->stepSimulation(1.0f / kPhysicsFps, kMaxSubSteps, 1.0f / kPhysicsFps);
+            world_->world->stepSimulation(1.0f / kPhysicsFps, max_substeps_,
+                                          1.0f / kPhysicsFps);
         for (std::size_t i = 0; i < body_map_.size(); ++i) {
             const int bi = body_map_[i];
             if (bi < 0) continue;
@@ -587,7 +611,7 @@ void Physics::step(Pose& pose, float dt, const MorphWeights* weights) {
     }
 
     // 2) 演算：MMD 固定 1/120 秒步长，每帧最多 10 个子步。
-    w->world->stepSimulation(dt, kMaxSubSteps, 1.0f / kPhysicsFps);
+    w->world->stepSimulation(dt, max_substeps_, 1.0f / kPhysicsFps);
     // 柔体与刚体同一次 stepSimulation 推进，这里只回读输出坐标。
     update_soft_output();
 

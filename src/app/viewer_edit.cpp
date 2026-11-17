@@ -5,6 +5,9 @@
 #include <chrono>
 #include <utility>
 
+#include "app/modules.hpp"
+#include "app/timeline.hpp"
+#include "core/anim.hpp"
 #include "core/morph.hpp"
 
 namespace {
@@ -169,7 +172,7 @@ void Viewer::set_preview_mode(bool preview) {
     if (preview_mode) {
         // 进入预览（PmxEditor 的 TransformView）：按当前动作帧重新落姿态，
         // 物理也以该帧为初始姿态复位，之后才允许播放动作 / 演算 / 摆姿。
-        if (motion) apply_motion_frame();
+        if (motion || timeline.clip) apply_motion_frame();
         if (physics_enabled) reset_physics();
         status = "已切换到预览模式：可播放动作 / 演算物理 / 摆骨骼，模型数据只读";
     } else {
@@ -177,6 +180,9 @@ void Viewer::set_preview_mode(bool preview) {
         // 全部复位成模型原始状态——编辑视图只显示模型数据本身。
         motion_playing = false;
         motion_dirty = false;
+        // 时间线只属于预览：收起面板并交还视角，clip 保留以便再切回来继续编辑。
+        timeline.enabled = false;
+        timeline.camera_track = false;
         morph_weights.clear();
         std::fill(morph_values.begin(), morph_values.end(), 0.0f);
         morph_dirty = true;
@@ -212,6 +218,37 @@ bool Viewer::save_model_dialog(bool always_ask) {
     }
     error.clear();
     return true;
+}
+
+bool Viewer::save_motion_dialog() {
+    std::string default_path = model_path;
+    if (!default_path.empty()) {
+        const std::size_t dot = default_path.find_last_of('.');
+        const std::size_t slash = default_path.find_last_of("/\\");
+        if (dot != std::string::npos && (slash == std::string::npos || dot > slash))
+            default_path = default_path.substr(0, dot);
+    }
+    if (default_path.empty()) default_path = model.name.empty() ? "motion" : model.name;
+    default_path += ".vmd";
+    const std::string out =
+        pick_save_file(kVmdFilter, L"保存 VMD 动作", default_path, L"vmd");
+    if (out.empty()) return false;  // 用户取消
+    try {
+        const pmx::VmdMotion motion_out =
+            (pmx::modules().timeline && timeline.clip)
+                ? pmx::to_vmd(*timeline.clip, pose ? &model : nullptr, out)
+                : (motion ? *motion : pmx::VmdMotion{});
+        const pmx::VmdExport res = pmx::save_vmd_motion(out, motion_out);
+        status = "已保存 VMD " + res.path + "（" + std::to_string(res.bones) + " 骨骼 / " +
+                 std::to_string(res.morphs) + " 形态）";
+        vmd_path = out;
+        motion_dirty_edit = false;
+        error.clear();
+        return true;
+    } catch (const std::exception& e) {
+        error = e.what();
+        return false;
+    }
 }
 
 void Viewer::edit(const std::string& label, const std::function<void(pmx::Model&)>& fn,

@@ -6,6 +6,7 @@
 #include <imgui.h>
 
 #include "app/panels/common.hpp"
+#include "app/profiler.hpp"
 #include "app/theme.hpp"
 
 void panel_settings(Viewer& v) {
@@ -53,6 +54,20 @@ void panel_settings(Viewer& v) {
     }
     ImGui::TextDisabled("文件不存在时使用默认值。");
 
+    // ------------------------------------------------------------ 性能
+    ImGui::SeparatorText("性能");
+    {
+        const pmx::Profiler& profiler = pmx::Profiler::instance();
+        const pmx::ProfileScope scopes[] = {pmx::ProfileScope::Frame, pmx::ProfileScope::Physics,
+                                            pmx::ProfileScope::Ik, pmx::ProfileScope::Skin,
+                                            pmx::ProfileScope::Ui, pmx::ProfileScope::Io};
+        for (pmx::ProfileScope scope : scopes) {
+            ImGui::Text("%s：%.2f ms", profiler.name(scope),
+                        profiler.milliseconds(scope));
+        }
+        ImGui::TextDisabled("滑动平均，用于判断瓶颈在物理、IK、蒙皮还是界面。");
+    }
+
     // ------------------------------------------------------------ 快捷键
     ImGui::SeparatorText("快捷键");
     if (ImGui::BeginTable("##settings_shortcuts", 2, ImGuiTableFlags_SizingFixedFit)) {
@@ -66,6 +81,8 @@ void panel_settings(Viewer& v) {
             {"Ctrl+O", "打开模型"},
             {"Ctrl+M", "切换编辑 / 预览模式"},
             {"Ctrl+F", "预览模式：检索骨骼 / 刚体 / 关节"},
+            {"Ctrl+T", "预览模式：展开 / 收起时间线"},
+            {"K", "时间线：当前姿态打关键帧"},
             {"Ctrl+S", "保存（仅编辑模式）"},
             {"Ctrl+Shift+S", "另存为（仅编辑模式）"},
             {"Ctrl+Z", "撤销"},

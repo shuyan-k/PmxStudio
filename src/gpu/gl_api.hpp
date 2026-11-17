@@ -101,6 +101,14 @@ constexpr GLenum GL_FILL = 0x1B02;
 constexpr GLenum GL_LINE = 0x1B01;
 constexpr GLenum GL_MULTISAMPLE = 0x809D;
 constexpr GLenum GL_DEPTH_CLAMP = 0x864F;
+constexpr GLenum GL_FRAMEBUFFER = 0x8D40;
+constexpr GLenum GL_COLOR_ATTACHMENT0 = 0x8CE0;
+constexpr GLenum GL_DEPTH_STENCIL_ATTACHMENT = 0x821A;
+constexpr GLenum GL_RENDERBUFFER = 0x8D41;
+constexpr GLenum GL_DEPTH24_STENCIL8 = 0x88F0;
+constexpr GLenum GL_FRAMEBUFFER_COMPLETE = 0x8CD5;
+constexpr GLenum GL_READ_FRAMEBUFFER = 0x8CA8;
+constexpr GLenum GL_DRAW_FRAMEBUFFER = 0x8CA9;
 }  // namespace glc
 
 #define PMX_GL_FUNCTIONS(X)                                                        \
@@ -172,7 +180,21 @@ constexpr GLenum GL_DEPTH_CLAMP = 0x864F;
     X(void, glDeleteTextures, (GLsizei, const GLuint*))                            \
     X(void, glPixelStorei, (GLenum, GLint))                                        \
     X(void, glDispatchCompute, (GLuint, GLuint, GLuint))                           \
-    X(void, glMemoryBarrier, (GLbitfield))
+    X(void, glMemoryBarrier, (GLbitfield))                                         \
+    X(void, glGenFramebuffers, (GLsizei, GLuint*))                                 \
+    X(void, glBindFramebuffer, (GLenum, GLuint))                                   \
+    X(void, glDeleteFramebuffers, (GLsizei, const GLuint*))                        \
+    X(void, glFramebufferTexture2D, (GLenum, GLenum, GLenum, GLuint, GLint))       \
+    X(GLenum, glCheckFramebufferStatus, (GLenum))                                  \
+    X(void, glGenRenderbuffers, (GLsizei, GLuint*))                                \
+    X(void, glBindRenderbuffer, (GLenum, GLuint))                                  \
+    X(void, glDeleteRenderbuffers, (GLsizei, const GLuint*))                       \
+    X(void, glRenderbufferStorage, (GLenum, GLenum, GLsizei, GLsizei))             \
+    X(void, glRenderbufferStorageMultisample, (GLenum, GLsizei, GLenum, GLsizei, GLsizei)) \
+    X(void, glFramebufferRenderbuffer, (GLenum, GLenum, GLenum, GLuint))           \
+    X(void, glBlitFramebuffer, (GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum)) \
+    X(void, glReadPixels, (GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*)) \
+    X(void, glReadBuffer, (GLenum))
 
 #define PMX_GL_DECLARE(ret, name, params) extern ret(GL_APIENTRY* name) params;
 PMX_GL_FUNCTIONS(PMX_GL_DECLARE)
