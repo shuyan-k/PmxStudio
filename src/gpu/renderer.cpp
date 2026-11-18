@@ -1062,7 +1062,10 @@ SceneRenderer::Texture SceneRenderer::toon_for(const Model& model, const Materia
 
 void SceneRenderer::bind_material(const Model& model, const Material& mt,
                                   const RenderSettings& settings) {
-    mesh_program_.set4f("uDiffuse", mt.diffuse.x, mt.diffuse.y, mt.diffuse.z, mt.diffuse.w);
+    // 预览模式下 alpha=0 的材质按不透明绘制（分类时已放进 opaque 列表）。
+    float alpha = mt.diffuse.w;
+    if (settings.preview_alpha && alpha < 0.001f) alpha = 1.0f;
+    mesh_program_.set4f("uDiffuse", mt.diffuse.x, mt.diffuse.y, mt.diffuse.z, alpha);
     mesh_program_.set3f("uAmbient", mt.ambient);
     mesh_program_.set3f("uSpecular", mt.specular);
     mesh_program_.set1f("uSpecCoef", mt.specular_coef);
@@ -1298,7 +1301,11 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
     glClearColor(settings.background.x, settings.background.y, settings.background.z, 1.0f);
     glClear(glc::GL_COLOR_BUFFER_BIT | glc::GL_DEPTH_BUFFER_BIT | glc::GL_STENCIL_BUFFER_BIT);
     glEnable(glc::GL_DEPTH_TEST);
-    glDepthFunc(glc::GL_LESS);
+    // 用 LEQUAL 而不是 LESS：PMX 里存在大量完全共面的重复材质（如 袖口/袖口+、
+    // 肌2/肌2衣、裙擺/裙擺+），LESS 会让后出现的覆盖层永远过不了深度测试，
+    // 被前一层吃掉。LEQUAL 让后画的材质在等深处胜出，与 mmd_tools 的
+    // __fixOverlappingFaceMaterials 处理方式一致。
+    glDepthFunc(glc::GL_LEQUAL);
     glDepthMask(glc::GL_TRUE);
     glEnable(glc::GL_MULTISAMPLE);
     glDisable(glc::GL_CULL_FACE);
@@ -1343,7 +1350,10 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
         mesh_program_.set1f("uRim", settings.rim);
         for (std::size_t r = 0; r < model_.ranges.size(); ++r) {
             const int mi = model_.ranges[r].material;
-            const float a = mi >= 0 ? model.materials[static_cast<std::size_t>(mi)].diffuse.w : 1.0f;
+            float a = mi >= 0 ? model.materials[static_cast<std::size_t>(mi)].diffuse.w : 1.0f;
+            // PmxEditor 风格预览：忽略材质透明度，让 alpha=0 的隐藏层（外裙、
+            // 光带等）进入不透明 pass 可见。
+            if (settings.preview_alpha && a < 0.001f) a = 1.0f;
             if (a >= 0.999f) opaque.push_back(static_cast<int>(r));
             else alpha.push_back(static_cast<int>(r));
         }
@@ -1442,6 +1452,8 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
                 glDepthMask(glc::GL_TRUE);
                 glDisable(glc::GL_BLEND);
             }
+            // 描边内部把深度比较改回了 LESS，这里恢复共面覆盖语义，供透明 pass 使用。
+            glDepthFunc(glc::GL_LEQUAL);
         }
 
         // 半透明材质最后画，才能正确覆盖前面已经完成的描边。

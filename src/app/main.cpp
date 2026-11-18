@@ -804,6 +804,7 @@ void Viewer::draw_ui() {
             ImGui::Separator();
             ImGui::MenuItem("线框", nullptr, &wireframe);
             ImGui::MenuItem("描边", nullptr, &outline);
+            ImGui::MenuItem("忽略材质透明度（PmxEditor 预览）", nullptr, &preview_alpha);
             ImGui::MenuItem("GPU 蒙皮", nullptr, &use_gpu);
             bool flat_toon = toon > 0.5f;
             if (ImGui::MenuItem("卡通光照", nullptr, &flat_toon))
@@ -1110,6 +1111,7 @@ void Viewer::draw_scene(int fb_w, int fb_h) {
     settings.wireframe = wireframe;
     settings.grid = grid;
     settings.outline = outline;
+    settings.preview_alpha = preview_alpha;
     settings.bone_alpha = bone_alpha;
     settings.rigid_alpha = rigid_alpha;
     settings.joint_alpha = joint_alpha;

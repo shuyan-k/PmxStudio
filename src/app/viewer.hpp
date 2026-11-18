@@ -71,6 +71,8 @@ struct Viewer {
     bool wireframe = false;
     bool grid = true;
     bool outline = true;
+    // 对照开关：忽略材质透明度，把 alpha=0 的隐藏层显示出来（PmxEditor 预览风格）。
+    bool preview_alpha = false;
     float bone_alpha = 0.85f;
     float rigid_alpha = 0.55f;
     float joint_alpha = 0.75f;

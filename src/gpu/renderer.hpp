@@ -30,6 +30,9 @@ struct RenderSettings {
     bool wireframe = false;
     bool grid = true;
     bool outline = true;
+    // PmxEditor 风格预览：忽略材质透明度，把 alpha=0 的隐藏层（外裙、光带等）
+    // 当作不透明绘制，便于和 PmxEditor 的预览效果对照。
+    bool preview_alpha = false;
     float bone_alpha = 0.85f;
     float rigid_alpha = 0.55f;
     float joint_alpha = 0.75f;

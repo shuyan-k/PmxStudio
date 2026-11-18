@@ -57,16 +57,21 @@ void main() {
     if (!gl_FrontFacing) n = -n;
     vec3 light = normalize(uLightDir);
     float ndl = dot(n, light);
-    float lambert = 0.54 + 0.16 * max(ndl, 0.0);
-    // Toon 光照：优先采样 ramp 贴图（内置 toon01..10 或材质自带 toon），
-    // 缺失时退回解析式两段阈值。MMD 的 toon 贴图是按 N·L(0..1) 排布的
-    // 竖直渐变，直接用它做 v 坐标；若再映射到 [-1,1] 会把明暗分界推到背面，
-    // 受光面几乎全亮、失去卡通分层。
+    float ndl_c = max(ndl, 0.0);
+    float lambert = 0.54 + 0.16 * ndl_c;
+    // Toon 光照：ramp 贴图只参与阴影侧调制，亮面保持解析光照。
+    // 直接把 ramp 当作 shade 会被"大面积纯白"的 toon 压平（例如 57 个材质
+    // 共用 toon3/toon4、85% 是纯白），整只模型失去明暗；mmd_tools 同样只
+    // 让 toon 影响阴影色（shader.py: "toon only affect shadow color"）。
     float shade;
     if (uUseToonTex == 1) {
-        shade = mix(lambert, texture(uToonTex, vec2(0.5, clamp(ndl, 0.0, 1.0))).r, uToon);
+        float ramp = dot(texture(uToonTex, vec2(0.5, clamp(ndl, 0.0, 1.0))).rgb,
+                         vec3(0.299, 0.587, 0.114));
+        float lit = 0.78 + 0.22 * ndl_c;
+        float shadow = 1.0 - smoothstep(0.0, 0.45, ndl_c);
+        shade = mix(lambert, lit * mix(1.0, ramp, shadow), uToon);
     } else {
-        float toon = 0.58 + 0.12 * smoothstep(0.20, 0.80, max(ndl, 0.0));
+        float toon = 0.58 + 0.12 * smoothstep(0.20, 0.80, ndl_c);
         shade = mix(lambert, toon, uToon);
     }
     vec3 col = base.rgb * shade + uAmbient * base.rgb * 0.06;

@@ -1,6 +1,7 @@
 # 构建产物（CMake / Ninja / VS）
 build/
 build-headless/
+build-repro/
 out/
 dist/
 cmake-build-*/

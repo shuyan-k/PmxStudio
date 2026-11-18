@@ -368,6 +368,8 @@ bool pmxtheme::load_settings(Viewer& v, std::string* err) {
             v.grid = flag;
         } else if (key == "outline" && parse_bool(value, flag)) {
             v.outline = flag;
+        } else if (key == "preview_alpha" && parse_bool(value, flag)) {
+            v.preview_alpha = flag;
         } else if (key == "toon" && parse_bool(value, flag)) {
             v.toon = flag ? 1.0f : 0.0f;
         } else if (key == "bone_alpha" && parse_float(value, number)) {
@@ -413,6 +415,7 @@ void pmxtheme::save_settings(const Viewer& v) {
         out << "wireframe=" << as_bit(v.wireframe) << '\n';
         out << "grid=" << as_bit(v.grid) << '\n';
         out << "outline=" << as_bit(v.outline) << '\n';
+        out << "preview_alpha=" << as_bit(v.preview_alpha) << '\n';
         out << "toon=" << as_bit(v.toon > 0.5f) << '\n';
         out << "bone_alpha=" << v.bone_alpha << '\n';
         out << "rigid_alpha=" << v.rigid_alpha << '\n';
