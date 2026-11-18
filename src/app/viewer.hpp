@@ -71,8 +71,8 @@ struct Viewer {
     bool wireframe = false;
     bool grid = true;
     bool outline = true;
-    // 忽略材质透明度：把 alpha=0 的层当作不透明显示，与 MMD / PmxEditor 观感一致。
-    bool preview_alpha = true;
+    // 忽略材质透明度：把 alpha=0 的层当作不透明显示（默认关闭，alpha=0 即隐藏）。
+    bool preview_alpha = false;
     float bone_alpha = 0.85f;
     float rigid_alpha = 0.55f;
     float joint_alpha = 0.75f;

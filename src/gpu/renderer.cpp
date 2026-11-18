@@ -1015,6 +1015,9 @@ SceneRenderer::Texture& SceneRenderer::texture_for(const Model& model, int index
     }
     Texture tex;
     int w = 0, h = 0, comp = 0;
+    // PMX 的 UV 原点在左上角（DirectX 约定），stb 默认把首行作为纹理第 0 行，
+    // 正好对应 v=0，因此这里不能再做垂直翻转；翻转会让脸部/表情 UV 落到图集
+    // 的另一块区域（眼睛变成黑框、露出张嘴表情）。
     stbi_set_flip_vertically_on_load(0);
     // stbi_load 用 fopen 打开窄字符路径，中文/日文纹理目录会失败；先按 UTF-8 路径读入内存。
     std::ifstream file = open_ifstream(path);
@@ -1341,8 +1344,11 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
         alpha_ranges_.clear();
         std::vector<int>& opaque = opaque_ranges_;
         std::vector<int>& alpha = alpha_ranges_;
-        // PMX 面片在右手系视图中是顺时针朝外（MMD 用左手系），需与模板几何分开处理绕序。
-        glFrontFace(glc::GL_CW);
+        // PMX 面片在右手系视图里是逆时针朝外。此前误设为 CW，会把所有单面材质
+        // 的背面当成正面绘制：脸部/眼睛/嘴这些细节层被背面剔除吃掉（只剩空眼
+        // 白和贴图里张开的嘴），衣物的法线也随之反转、越画越亮（深色海军蓝变
+        // 成浅紫）。这里必须用 CCW。
+        glFrontFace(glc::GL_CCW);
         // 相机位置与视图矩阵是全局 uniform，逐材质只改材质参数。
         mesh_program_.use();
         mesh_program_.set_mat4("uView", view);
