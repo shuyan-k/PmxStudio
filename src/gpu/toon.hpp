@@ -47,6 +47,9 @@ uniform float uSpecCoef;
 uniform float uToon;
 uniform float uRim;
 uniform vec3 uLightDir;
+uniform vec3 uLightColor;
+uniform float uLightIntensity;
+uniform vec3 uSceneAmbient;
 uniform vec3 uEye;
 uniform mat4 uView;
 void main() {
@@ -74,9 +77,13 @@ void main() {
         float toon = 0.58 + 0.12 * smoothstep(0.20, 0.80, ndl_c);
         shade = mix(lambert, toon, uToon);
     }
-    vec3 col = base.rgb * shade + uAmbient * base.rgb * 0.06;
+    // 照明色 × 强度作用在直射光上；环境色乘在暗部（MMD 的「環境色」）。
+    // 默认 白光/强度 1/白色环境时与旧公式完全一致，只是多了可调范围。
+    vec3 light_rgb = uLightColor * uLightIntensity;
+    vec3 col = base.rgb * mix(uSceneAmbient, vec3(1.0), shade) * light_rgb;
+    col += uAmbient * base.rgb * uSceneAmbient * 0.06;
     float spec = pow(max(ndl, 0.0), 14.0) * uSpecCoef;
-    col += uSpecular * spec;
+    col += uSpecular * spec * light_rgb;
     // 球面贴图按相机空间法线的 XY 采样（MMD 约定），转动视角时高光会滑动。
     if (uUseSphere == 1) {
         vec3 nv = normalize(mat3(uView) * n);

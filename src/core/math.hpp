@@ -362,6 +362,20 @@ inline Mat4 perspective(float fov_deg, float aspect, float near_planes, float fa
     return out;
 }
 
+// 正交投影（MMD 相机关闭「透视」时用），深度约定与 perspective 一致。
+inline Mat4 orthographic(float left, float right, float bottom, float top, float znear,
+                         float zfar) {
+    Mat4 out;
+    out.m[0] = 2.0f / (right - left);
+    out.m[5] = 2.0f / (top - bottom);
+    out.m[10] = -2.0f / (zfar - znear);
+    out.m[12] = -(right + left) / (right - left);
+    out.m[13] = -(top + bottom) / (top - bottom);
+    out.m[14] = -(zfar + znear) / (zfar - znear);
+    out.m[15] = 1.0f;
+    return out;
+}
+
 struct Ray {
     Vec3 origin;
     Vec3 direction;

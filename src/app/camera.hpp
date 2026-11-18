@@ -12,6 +12,10 @@ public:
     float yaw = kPi;
     float pitch = 0.18f;
     float fov = 38.0f;
+    // 正交投影（对应 MMD 相机关闭「透视」）：透视时忽略，改用 fov。
+    // ortho_scale 是画面上下的世界高度，左右按宽高比自动展开。
+    bool ortho = false;
+    float ortho_scale = 30.0f;
     float near_plane = 0.1f;
     float far_plane = 4000.0f;
 

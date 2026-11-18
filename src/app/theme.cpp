@@ -113,6 +113,22 @@ bool parse_int(const std::string& text, int& out) {
     return true;
 }
 
+// 逗号分隔的三个浮点数，例如 "0.35,0.72,0.45"。
+bool parse_vec3(const std::string& text, float out[3]) {
+    const std::size_t c1 = text.find(',');
+    if (c1 == std::string::npos) return false;
+    const std::size_t c2 = text.find(',', c1 + 1);
+    if (c2 == std::string::npos) return false;
+    float x = 0.0f, y = 0.0f, z = 0.0f;
+    if (!parse_float(trim(text.substr(0, c1)), x)) return false;
+    if (!parse_float(trim(text.substr(c1 + 1, c2 - c1 - 1)), y)) return false;
+    if (!parse_float(trim(text.substr(c2 + 1)), z)) return false;
+    out[0] = x;
+    out[1] = y;
+    out[2] = z;
+    return true;
+}
+
 int as_bit(bool on) { return on ? 1 : 0; }
 
 struct ThemeColors {
@@ -386,6 +402,24 @@ bool pmxtheme::load_settings(Viewer& v, std::string* err) {
             v.ground = flag;
         } else if (key == "physics_enabled" && parse_bool(value, flag)) {
             v.physics_enabled = flag;
+        } else if (key == "light_dir" && parse_vec3(value, v.light)) {
+            // 逗号分隔的三个分量，缺项时保留默认值。
+        } else if (key == "light_color" && parse_vec3(value, v.light_color)) {
+        } else if (key == "ambient_color" && parse_vec3(value, v.ambient)) {
+        } else if (key == "light_intensity" && parse_float(value, number)) {
+            v.light_intensity = std::clamp(number, 0.0f, 3.0f);
+        } else if (key == "show_light" && parse_bool(value, flag)) {
+            v.show_light = flag;
+        } else if (key == "cam_fov" && parse_float(value, number)) {
+            v.camera.fov = std::clamp(number, 5.0f, 120.0f);
+        } else if (key == "cam_ortho" && parse_bool(value, flag)) {
+            v.camera.ortho = flag;
+        } else if (key == "cam_ortho_scale" && parse_float(value, number)) {
+            v.camera.ortho_scale = std::clamp(number, 0.05f, 4000.0f);
+        } else if (key == "cam_near" && parse_float(value, number)) {
+            v.camera.near_plane = std::clamp(number, 0.01f, 100.0f);
+        } else if (key == "cam_far" && parse_float(value, number)) {
+            v.camera.far_plane = std::clamp(number, 10.0f, 20000.0f);
         } else if (key == "last_model") {
             // 只在尚未载入模型时恢复路径，避免覆盖当前会话的保存目标。
             if (v.model_path.empty() && !value.empty()) v.model_path = value;
@@ -424,6 +458,18 @@ void pmxtheme::save_settings(const Viewer& v) {
         out << "iterations=" << v.iterations << '\n';
         out << "ground=" << as_bit(v.ground) << '\n';
         out << "physics_enabled=" << as_bit(v.physics_enabled) << '\n';
+        out << "light_dir=" << v.light[0] << ',' << v.light[1] << ',' << v.light[2] << '\n';
+        out << "light_color=" << v.light_color[0] << ',' << v.light_color[1] << ','
+            << v.light_color[2] << '\n';
+        out << "light_intensity=" << v.light_intensity << '\n';
+        out << "ambient_color=" << v.ambient[0] << ',' << v.ambient[1] << ',' << v.ambient[2]
+            << '\n';
+        out << "show_light=" << as_bit(v.show_light) << '\n';
+        out << "cam_fov=" << v.camera.fov << '\n';
+        out << "cam_ortho=" << as_bit(v.camera.ortho) << '\n';
+        out << "cam_ortho_scale=" << v.camera.ortho_scale << '\n';
+        out << "cam_near=" << v.camera.near_plane << '\n';
+        out << "cam_far=" << v.camera.far_plane << '\n';
         out << "last_model=" << v.model_path << '\n';
     } catch (...) {
         // 配置文件只是偏好，写失败不影响继续使用。

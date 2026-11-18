@@ -1,5 +1,6 @@
 #include "app/camera.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace pmx {
@@ -30,7 +31,13 @@ Mat4 OrbitCamera::view() const {
 }
 
 Mat4 OrbitCamera::projection(float aspect) const {
-    return perspective(fov, aspect > 0.01f ? aspect : 0.01f, near_plane, far_plane);
+    const float a = aspect > 0.01f ? aspect : 0.01f;
+    if (ortho) {
+        const float half_h = std::max(0.01f, ortho_scale * 0.5f);
+        const float half_w = half_h * a;
+        return orthographic(-half_w, half_w, -half_h, half_h, near_plane, far_plane);
+    }
+    return perspective(fov, a, near_plane, far_plane);
 }
 
 Vec3 OrbitCamera::right() const {
@@ -84,6 +91,14 @@ Ray OrbitCamera::ray(float sx, float sy, int width, int height) const {
     const Vec3 r = right();
     const Vec3 u = up_vec();
     Ray out;
+    if (ortho) {
+        // 正交：射线互相平行，起点在视平面上按取景高度平移。
+        const float half_h = std::max(0.01f, ortho_scale * 0.5f);
+        const float half_w = half_h * aspect;
+        out.origin = eye() + r * (ndc_x * half_w) + u * (ndc_y * half_h);
+        out.direction = forward;
+        return out;
+    }
     out.origin = eye();
     out.direction = normalize(forward + r * (ndc_x * tan_half * aspect) +
                              u * (ndc_y * tan_half));

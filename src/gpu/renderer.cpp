@@ -477,6 +477,7 @@ SceneRenderer::~SceneRenderer() {
     drop(joint_sphere_);
     drop(bone_mesh_);
     drop(camera_mesh_);
+    drop(light_mesh_);
     if (overlay_instance_ssbo_) {
         glDeleteBuffers(1, &overlay_instance_ssbo_);
         overlay_instance_ssbo_ = 0;
@@ -553,6 +554,19 @@ void SceneRenderer::build_templates() {
     glBindBuffer(glc::GL_ARRAY_BUFFER, camera_mesh_.vbo);
     glBufferData(glc::GL_ARRAY_BUFFER, 0, nullptr, glc::GL_STREAM_DRAW);
     const GLsizei line_stride = 7 * sizeof(float);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, glc::GL_FLOAT, glc::GL_FALSE, line_stride, nullptr);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, glc::GL_FLOAT, glc::GL_FALSE, line_stride,
+                          reinterpret_cast<const void*>(3 * sizeof(float)));
+    glBindVertexArray(0);
+
+    // 方向光标记：与相机线框同一套 pos3 + color4 布局，每帧重传。
+    glGenVertexArrays(1, &light_mesh_.vao);
+    glBindVertexArray(light_mesh_.vao);
+    glGenBuffers(1, &light_mesh_.vbo);
+    glBindBuffer(glc::GL_ARRAY_BUFFER, light_mesh_.vbo);
+    glBufferData(glc::GL_ARRAY_BUFFER, 0, nullptr, glc::GL_STREAM_DRAW);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, glc::GL_FLOAT, glc::GL_FALSE, line_stride, nullptr);
     glEnableVertexAttribArray(1);
@@ -660,9 +674,12 @@ void SceneRenderer::build_camera_gizmo(const RenderSettings& settings, Vec3 view
 
     // 取景锥：从镜头到远平面矩形，宽高比与导出画面一致。
     const float far_d = s * 3.0f;
-    const float tan_half = std::tan(settings.camera_fov * kPi / 360.0f);
-    const float fh = far_d * tan_half;
-    const float fw = fh * std::max(settings.camera_aspect, 0.05f);
+    const float aspect = std::max(settings.camera_aspect, 0.05f);
+    // 正交机位画成方盒取景（MMD 关闭「透视」），透视机位画成锥台。
+    const float fh = settings.camera_ortho
+                         ? std::max(settings.camera_ortho_scale, 0.05f) * 0.5f
+                         : far_d * std::tan(settings.camera_fov * kPi / 360.0f);
+    const float fw = fh * aspect;
     const Vec3 center = eye + forward * (s * 0.55f + far_d);
     const Vec3 q[4] = {center - right * fw + upv * fh, center + right * fw + upv * fh,
                        center + right * fw - upv * fh, center - right * fw - upv * fh};
@@ -683,6 +700,98 @@ void SceneRenderer::build_camera_gizmo(const RenderSettings& settings, Vec3 view
     glBufferData(glc::GL_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(camera_verts_.size() * sizeof(float)),
                  camera_verts_.data(), glc::GL_STREAM_DRAW);
+    glBindBuffer(glc::GL_ARRAY_BUFFER, 0);
+}
+
+void SceneRenderer::build_light_gizmo(const RenderSettings& settings, float aspect,
+                                      const Mat4& view) {
+    light_verts_.clear();
+    light_vertex_count_ = 0;
+    Vec3 dir = settings.light_dir;
+    const float dlen = length(dir);
+    // 方向全零时退回正上方，避免 normalize 出 NaN。
+    dir = dlen > 1e-4f ? dir * (1.0f / dlen) : Vec3{0.0f, 1.0f, 0.0f};
+
+    // 视口右上角的光照罗盘：直接画在 NDC 里（z=0、MVP 用单位阵），
+    // 不受模型尺度/取景影响，任何相机距离下都完整可见。
+    // 圆用椭圆参数绘制（x 半径按宽高比压缩），屏幕上看起来仍是正圆。
+    const float ry = 0.072f;
+    const float rx = ry / std::max(aspect, 0.2f);
+    const float cx = 0.86f - rx * 1.9f;
+    const float cy = 0.86f - ry * 1.9f;
+
+    // 光照色参与罗盘颜色，强度越低越暗，能直接看出当前灯光的色温与亮度。
+    const Vec3 tint = settings.light_color;
+    const float bright = clampf(settings.light_intensity, 0.0f, 2.0f) * 0.5f + 0.5f;
+    auto tone = [&tint, bright](float base, float alpha) {
+        return Vec4{clampf(tint.x * base * bright, 0.0f, 1.0f),
+                    clampf(tint.y * base * bright, 0.0f, 1.0f),
+                    clampf(tint.z * base * bright, 0.0f, 1.0f), alpha};
+    };
+    const Vec4 sun_color = tone(1.0f, 0.95f);
+    const Vec4 ray_color = tone(0.82f, 0.75f);
+    const Vec4 arrow_color{1.0f, 0.96f, 0.86f, 0.85f};
+
+    auto push = [this, cx, cy](float px, float py, Vec4 c) {
+        light_verts_.insert(light_verts_.end(), {cx + px, cy + py, 0.0f, c.x, c.y, c.z, c.w});
+    };
+    auto line = [&push](float x0, float y0, float x1, float y1, Vec4 c) {
+        push(x0, y0, c);
+        push(x1, y1, c);
+    };
+    // 以“圆盘单位”换算到 NDC：t 为角度，r 为相对半径。
+    auto point = [rx, ry](float t, float r) {
+        return Vec2{std::cos(t) * rx * r, std::sin(t) * ry * r};
+    };
+
+    // 圆盘 + 8 道短射线。
+    constexpr int kSegments = 32;
+    for (int i = 0; i < kSegments; ++i) {
+        const float t0 = 2.0f * kPi * static_cast<float>(i) / kSegments;
+        const float t1 = 2.0f * kPi * static_cast<float>(i + 1) / kSegments;
+        const Vec2 p0 = point(t0, 1.0f);
+        const Vec2 p1 = point(t1, 1.0f);
+        line(p0.x, p0.y, p1.x, p1.y, sun_color);
+    }
+    for (int i = 0; i < 8; ++i) {
+        const float t = 2.0f * kPi * static_cast<float>(i) / 8.0f;
+        const Vec2 p0 = point(t, 1.30f);
+        const Vec2 p1 = point(t, 1.85f);
+        line(p0.x, p0.y, p1.x, p1.y, ray_color);
+    }
+
+    // 光源在屏幕上的方向：把光向量投到相机空间，取 x/y 分量。
+    const float vx = view.m[0] * dir.x + view.m[4] * dir.y + view.m[8] * dir.z;
+    const float vy = view.m[1] * dir.x + view.m[5] * dir.y + view.m[9] * dir.z;
+    const float planar = std::sqrt(vx * vx + vy * vy);
+    if (planar < 0.08f) {
+        // 光沿视线方向（顺光/逆光）：投影退化成一个点，画个小圆点表示朝向观察者。
+        constexpr int kDot = 12;
+        for (int i = 0; i < kDot; ++i) {
+            const float t0 = 2.0f * kPi * static_cast<float>(i) / kDot;
+            const float t1 = 2.0f * kPi * static_cast<float>(i + 1) / kDot;
+            const Vec2 p0 = point(t0, 0.18f);
+            const Vec2 p1 = point(t1, 0.18f);
+            line(p0.x, p0.y, p1.x, p1.y, arrow_color);
+        }
+    } else {
+        // 箭头指向光源来向（与 MMD 照明面板的 X/Y/Z 小球一致）。
+        const Vec2 tip{vx / planar * rx * 1.55f, vy / planar * ry * 1.55f};
+        const float tl = std::max(std::sqrt(tip.x * tip.x + tip.y * tip.y), 1e-5f);
+        const float nx = -tip.y / tl;
+        const float ny = tip.x / tl;
+        const float hw = std::min(rx, ry) * 0.45f;
+        const Vec2 base{tip.x * 0.45f, tip.y * 0.45f};
+        line(0.0f, 0.0f, tip.x, tip.y, arrow_color);
+        line(tip.x, tip.y, base.x + nx * hw, base.y + ny * hw, arrow_color);
+        line(tip.x, tip.y, base.x - nx * hw, base.y - ny * hw, arrow_color);
+    }
+
+    light_vertex_count_ = static_cast<GLuint>(light_verts_.size() / 7);
+    glBindBuffer(glc::GL_ARRAY_BUFFER, light_mesh_.vbo);
+    glBufferData(glc::GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(light_verts_.size() * sizeof(float)),
+                 light_verts_.data(), glc::GL_STREAM_DRAW);
     glBindBuffer(glc::GL_ARRAY_BUFFER, 0);
 }
 
@@ -1354,6 +1463,10 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
         mesh_program_.set_mat4("uView", view);
         mesh_program_.set3f("uEye", eye);
         mesh_program_.set1f("uRim", settings.rim);
+        // 全场统一的方向光参数，逐材质只改材质自身的漫反射/贴图等。
+        mesh_program_.set3f("uLightColor", settings.light_color);
+        mesh_program_.set1f("uLightIntensity", settings.light_intensity);
+        mesh_program_.set3f("uSceneAmbient", settings.ambient_color);
         for (std::size_t r = 0; r < model_.ranges.size(); ++r) {
             const int mi = model_.ranges[r].material;
             float a = mi >= 0 ? model.materials[static_cast<std::size_t>(mi)].diffuse.w : 1.0f;
@@ -1543,6 +1656,20 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
                 }
                 base_instance += count;
             }
+            glBindVertexArray(0);
+        }
+    }
+
+    // ---- 光源罗盘：画在视口右上角（NDC 空间），任何取景下都完整可见。
+    if (settings.show_light) {
+        build_light_gizmo(settings, static_cast<float>(width) / static_cast<float>(height),
+                          view);
+        if (light_vertex_count_ > 0) {
+            line_program_.use();
+            line_program_.set_mat4("uMVP", identity4());
+            line_program_.set1f("uAlpha", 1.0f);
+            glBindVertexArray(light_mesh_.vao);
+            glDrawArrays(glc::GL_LINES, 0, static_cast<GLsizei>(light_vertex_count_));
             glBindVertexArray(0);
         }
     }

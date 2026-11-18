@@ -801,6 +801,8 @@ void Viewer::draw_ui() {
             ImGui::MenuItem("刚体", nullptr, &show_rigid);
             ImGui::MenuItem("关节", nullptr, &show_joints);
             ImGui::MenuItem("地面网格", nullptr, &grid);
+            ImGui::MenuItem("光源指示", nullptr, &show_light);
+            ImGui::SetItemTooltip("在视口画出方向光的太阳标记与照射方向");
             ImGui::Separator();
             ImGui::MenuItem("线框", nullptr, &wireframe);
             ImGui::MenuItem("描边", nullptr, &outline);
@@ -1004,6 +1006,7 @@ void Viewer::draw_ui() {
                 tab("输出", &panel_output);
             tab("物理", &panel_preview_physics);
             tab("形态", &panel_preview_morph);
+            tab("灯光", &panel_light);
             tab("设置", &panel_settings);
         } else {
             tab("信息", &panel_info);
@@ -1120,6 +1123,10 @@ void Viewer::draw_scene(int fb_w, int fb_h) {
     settings.rim = rim;
     settings.background = {bg[0], bg[1], bg[2]};
     settings.light_dir = {light[0], light[1], light[2]};
+    settings.light_color = {light_color[0], light_color[1], light_color[2]};
+    settings.light_intensity = light_intensity;
+    settings.ambient_color = {ambient[0], ambient[1], ambient[2]};
+    settings.show_light = show_light;
 
     // 场景相机 gizmo：有相机动作就显示机位线框；从相机视角取景时不画自己。
     settings.show_camera = false;
@@ -1131,6 +1138,8 @@ void Viewer::draw_scene(int fb_w, int fb_h) {
             settings.camera_eye = track_cam.eye();
             settings.camera_target = track_cam.target;
             settings.camera_fov = track_cam.fov;
+            settings.camera_ortho = track_cam.ortho;
+            settings.camera_ortho_scale = track_cam.ortho_scale;
             const int ow = output.width > 0 ? output.width : 1920;
             const int oh = output.height > 0 ? output.height : 1080;
             settings.camera_aspect = static_cast<float>(ow) / static_cast<float>(oh);
@@ -1450,6 +1459,10 @@ bool Viewer::camera_motion_orbit_at(double frame, pmx::OrbitCamera& out) const {
     out.yaw = std::atan2(offset.x, offset.z);
     out.pitch = std::asin(std::clamp(offset.y / len, -1.0f, 1.0f));
     out.fov = static_cast<float>(key.fov);
+    // MMD 相机的「透视」关闭时用正交：取景高度按注视点处的透视画幅换算，
+    // 切换前后构图一致。
+    out.ortho = !key.perspective;
+    out.ortho_scale = std::max(0.05f, 2.0f * len * std::tan(out.fov * pmx::kPi / 360.0f));
     return true;
 }
 

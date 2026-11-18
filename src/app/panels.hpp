@@ -14,6 +14,8 @@ void panel_motion(Viewer& v);
 void panel_physics(Viewer& v);
 void panel_soft(Viewer& v);
 void panel_settings(Viewer& v);
+// 灯光：MMD 风格的一盏方向光 + 环境色，含视口光源指示开关与预设。
+void panel_light(Viewer& v);
 
 // 预览模式（模型只读）专用的控制面板。
 void panel_preview_search(Viewer& v);

@@ -40,7 +40,14 @@ struct RenderSettings {
     float toon = 1.0f;
     float rim = 0.18f;  // 边缘光强度
     Vec3 background{0.13f, 0.14f, 0.16f};
+    // 方向光：light_dir 指向光源（与 shader 的 N·L 一致）。
     Vec3 light_dir{0.35f, 0.72f, 0.45f};
+    Vec3 light_color{1.0f, 1.0f, 1.0f};
+    float light_intensity = 1.0f;
+    // 环境色：乘在暗部，等价于 MMD 照明面板的「環境色」。
+    Vec3 ambient_color{1.0f, 1.0f, 1.0f};
+    // 视口里画一个太阳标记与方向箭头（Blender 的灯光 gizmo）。
+    bool show_light = true;
 
     // 场景相机可视化（Blender 风格）：机位线框 + 取景锥。
     bool show_camera = false;
@@ -48,6 +55,8 @@ struct RenderSettings {
     Vec3 camera_eye{0.0f, 10.0f, 0.0f};
     Vec3 camera_target{0.0f, 10.0f, 0.0f};
     float camera_fov = 38.0f;
+    bool camera_ortho = false;
+    float camera_ortho_scale = 30.0f;
     float camera_aspect = 16.0f / 9.0f;
 };
 
@@ -141,6 +150,9 @@ private:
     OverlayMesh camera_mesh_;     // 每帧重建：场景相机线框（pos3 + color4）
     GLuint camera_vertex_count_ = 0;
     std::vector<float> camera_verts_;
+    OverlayMesh light_mesh_;      // 每帧重建：光照罗盘（NDC 坐标）
+    GLuint light_vertex_count_ = 0;
+    std::vector<float> light_verts_;
     OverlayMesh rigid_box_;       // 模板：单位盒
     OverlayMesh rigid_sphere_;    // 模板：单位球
     OverlayMesh rigid_cylinder_;  // 模板：单位圆柱（胶囊柱段）
@@ -203,6 +215,8 @@ private:
                               const Selection& selection);
     // 场景相机 gizmo：机身线框 + 前端取景锥，尺寸按到视点距离自适应。
     void build_camera_gizmo(const RenderSettings& settings, Vec3 view_eye);
+    // 光照罗盘：视口右上角的圆盘 + 指向光源的箭头，画在 NDC 空间。
+    void build_light_gizmo(const RenderSettings& settings, float aspect, const Mat4& view);
     void build_instances(const Model& model, Pose& pose, Physics* physics,
                          const RenderSettings& settings, const Selection& selection);
     Texture& texture_for(const Model& model, int index);

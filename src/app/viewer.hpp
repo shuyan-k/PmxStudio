@@ -79,7 +79,13 @@ struct Viewer {
     float toon = 1.0f;
     float rim = 0.18f;
     float bg[3] = {0.13f, 0.14f, 0.16f};
+    // 灯光：light 指向光源（MMD 照明面板的 X/Y/Z），颜色 × 强度作用在直射光上，
+    // ambient 乘在暗部（MMD 的「環境色」）。都只影响视图与渲染输出。
     float light[3] = {0.35f, 0.72f, 0.45f};
+    float light_color[3] = {1.0f, 1.0f, 1.0f};
+    float light_intensity = 1.0f;
+    float ambient[3] = {1.0f, 1.0f, 1.0f};
+    bool show_light = true;
 
     // VMD 模型动作（骨骼 / 形态 / IK）：导入后按 30 fps 时间轴播放；暂停时保留当前帧姿态。
     // 同一文件里的相机帧不放在这里，导入时拆进 camera_motion。

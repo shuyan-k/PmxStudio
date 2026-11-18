@@ -51,6 +51,60 @@ void panel_camera(Viewer& v) {
         "清除互不影响。");
     ImGui::Spacing();
 
+    // ------------------------------------------------------------ 当前视角
+    // 参数化视角（参考 MMD 相机面板 / Blender 相机的焦距与裁剪面）：
+    // 只影响查看器与渲染输出，不写入 PMX；进入相机视角后由相机动作接管。
+    ImGui::SeparatorText("当前视角");
+    ImGui::BeginDisabled(v.camera_view);
+
+    float fov = v.camera.fov;
+    ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+    if (ImGui::SliderFloat("视角 FOV##cam_fov", &fov, 5.0f, 120.0f, "%.1f°"))
+        v.camera.fov = fov;
+
+    // 35mm 全画幅（24mm 高）等效焦距：f = 12 / tan(垂直 FOV / 2)。
+    float focal = 12.0f / std::tan(v.camera.fov * pmx::kPi / 360.0f);
+    ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+    if (ImGui::DragFloat("焦距##cam_focal", &focal, 0.5f, 8.0f, 300.0f, "%.1f mm"))
+        v.camera.fov = 2.0f * std::atan(12.0f / std::max(1.0f, focal)) * 180.0f / pmx::kPi;
+    ImGui::SetItemTooltip("按 35mm 全画幅换算，与视角 FOV 联动");
+
+    ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+    ImGui::DragFloat("距离##cam_distance", &v.camera.distance, 0.2f, 0.6f, 2000.0f, "%.1f");
+    ImGui::DragFloat3("注视点##cam_target", &v.camera.target.x, 0.1f, -10000.0f, 10000.0f,
+                      "%.1f");
+
+    if (ImGui::Checkbox("正交投影##cam_ortho", &v.camera.ortho) && v.camera.ortho) {
+        // 切到正交时按当前透视画幅换算取景高度，切换瞬间构图不跳。
+        v.camera.ortho_scale =
+            2.0f * v.camera.distance * std::tan(v.camera.fov * pmx::kPi / 360.0f);
+    }
+    ImGui::SetItemTooltip("对应 MMD 相机关闭「透视」");
+    if (v.camera.ortho) {
+        ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+        ImGui::DragFloat("取景高度##cam_ortho_scale", &v.camera.ortho_scale, 0.1f, 0.05f, 4000.0f,
+                         "%.1f");
+    }
+
+    ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+    ImGui::DragFloat("近裁剪面##cam_near", &v.camera.near_plane, 0.01f, 0.01f, 100.0f, "%.2f");
+    ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+    ImGui::DragFloat("远裁剪面##cam_far", &v.camera.far_plane, 10.0f, 10.0f, 20000.0f, "%.0f");
+
+    if (ImGui::Button("重置视角参数")) {
+        v.camera.fov = 38.0f;
+        v.camera.near_plane = 0.1f;
+        v.camera.far_plane = 4000.0f;
+        v.camera.ortho = false;
+        v.camera.ortho_scale = 30.0f;
+    }
+    ImGui::EndDisabled();
+    if (v.camera_view)
+        ImGui::TextDisabled("相机视角下由相机动作接管；按 0 退出后可手动调整。");
+    else
+        ImGui::TextDisabled("这些参数只影响查看器与渲染输出，不写入 PMX / VMD。");
+
+    ImGui::Spacing();
     ImGui::SeparatorText("相机动作");
     if (v.camera_motion.loaded()) {
         ImGui::Text("来源：%s", v.camera_motion.source.c_str());
