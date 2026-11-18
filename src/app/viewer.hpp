@@ -78,6 +78,8 @@ struct Viewer {
     float joint_alpha = 0.75f;
     float toon = 1.0f;
     float rim = 0.18f;
+    // 卡通明暗分界的过渡宽度：越小越接近 MMD 的硬边。
+    float toon_edge = 0.12f;
     float bg[3] = {0.13f, 0.14f, 0.16f};
     // 灯光：light 指向光源（MMD 照明面板的 X/Y/Z），颜色 × 强度作用在直射光上，
     // ambient 乘在暗部（MMD 的「環境色」）。都只影响视图与渲染输出。
@@ -130,7 +132,9 @@ struct Viewer {
     struct OutputSettings {
         int width = 1920;
         int height = 1080;
-        int supersample = 1;
+        // 渲染分辨率 = 宽高 × 倍数，同时作为 MSAA 采样数；2 在 1080p 输出时
+        // 等于按 4K 原生渲染，边缘和贴图细节明显比 1 干净。
+        int supersample = 2;
         int begin = 0;
         int end = 120;
         int step = 1;

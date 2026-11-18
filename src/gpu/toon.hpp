@@ -45,6 +45,7 @@ uniform vec3 uAmbient;
 uniform vec3 uSpecular;
 uniform float uSpecCoef;
 uniform float uToon;
+uniform float uToonEdge;
 uniform float uRim;
 uniform vec3 uLightDir;
 uniform vec3 uLightColor;
@@ -71,7 +72,9 @@ void main() {
         float ramp = dot(texture(uToonTex, vec2(0.5, clamp(ndl, 0.0, 1.0))).rgb,
                          vec3(0.299, 0.587, 0.114));
         float lit = 0.78 + 0.22 * ndl_c;
-        float shadow = 1.0 - smoothstep(0.0, 0.45, ndl_c);
+        // 明暗分界的过渡宽度由 uToonEdge 控制：越小越接近 MMD 的硬边，
+        // 过大会让整块阴影变成渐变，观感发虚。
+        float shadow = 1.0 - smoothstep(0.0, max(uToonEdge, 0.01), ndl_c);
         shade = mix(lambert, lit * mix(1.0, ramp, shadow), uToon);
     } else {
         float toon = 0.58 + 0.12 * smoothstep(0.20, 0.80, ndl_c);

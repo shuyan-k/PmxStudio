@@ -121,6 +121,10 @@ void export_job_tick(Viewer& v) {
     settings.show_joints = false;
     settings.grid = false;
     settings.focus_selection = false;
+    // 导出只保留模型本身：光源罗盘是视口辅助，进画面会挡主体。
+    settings.show_light = false;
+    // 边缘光会在剪影内侧加一圈提亮，削掉贴图细节；导出按 MMD 原版（无边缘光）出图。
+    settings.rim = 0.0f;
 
     const float aspect = static_cast<float>(w) / static_cast<float>(std::max(1, h));
     job.target->bind();

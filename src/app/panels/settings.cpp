@@ -28,6 +28,9 @@ void panel_settings(Viewer& v) {
     ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
     ImGui::SliderFloat("边缘光##rim", &v.rim, 0.0f, 0.6f, "%.2f");
     ImGui::SetItemTooltip("沿轮廓叠加本体色的强度；0 为关闭，接近 MMD 原版效果");
+    ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+    ImGui::SliderFloat("明暗分界##toon_edge", &v.toon_edge, 0.02f, 0.45f, "%.2f");
+    ImGui::SetItemTooltip("卡通阴影过渡宽度：越小越接近 MMD 的硬边，越大越像渐变");
 
     // ------------------------------------------------------------ Bullet 物理
     ImGui::SeparatorText("Bullet 物理");

@@ -1151,6 +1151,14 @@ SceneRenderer::Texture& SceneRenderer::texture_for(const Model& model, int index
                         static_cast<GLint>(glc::GL_REPEAT));
         glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_WRAP_T,
                         static_cast<GLint>(glc::GL_REPEAT));
+        // 各向异性过滤：发丝/裙摆这类斜视表面只用 trilinear 会被拉到偏低的
+        // mip 层级，细节被平均成一片。按驱动上限取 16×，不支持时该调用无效。
+        GLfloat max_aniso = 1.0f;
+        glGetFloatv(glc::GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &max_aniso);
+        if (max_aniso > 1.0f) {
+            glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_MAX_ANISOTROPY_EXT,
+                            static_cast<GLint>(std::min(max_aniso, 16.0f)));
+        }
         stbi_image_free(pixels);
         tex.valid = true;
     }
@@ -1463,6 +1471,7 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
         mesh_program_.set_mat4("uView", view);
         mesh_program_.set3f("uEye", eye);
         mesh_program_.set1f("uRim", settings.rim);
+        mesh_program_.set1f("uToonEdge", settings.toon_edge);
         // 全场统一的方向光参数，逐材质只改材质自身的漫反射/贴图等。
         mesh_program_.set3f("uLightColor", settings.light_color);
         mesh_program_.set1f("uLightIntensity", settings.light_intensity);

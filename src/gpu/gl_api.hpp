@@ -72,6 +72,7 @@ constexpr GLenum GL_TEXTURE_MAG_FILTER = 0x2800;
 constexpr GLenum GL_TEXTURE_WRAP_S = 0x2802;
 constexpr GLenum GL_TEXTURE_WRAP_T = 0x2803;
 constexpr GLenum GL_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE;
+constexpr GLenum GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FF;
 constexpr GLenum GL_TEXTURE_MAX_LEVEL = 0x813D;
 constexpr GLenum GL_UNPACK_ALIGNMENT = 0x0CF5;
 constexpr GLenum GL_VERSION = 0x1F02;
@@ -135,6 +136,7 @@ constexpr GLenum GL_DRAW_FRAMEBUFFER = 0x8CA9;
     X(void, glDrawArrays, (GLenum, GLint, GLsizei))                                \
     X(void, glDrawArraysInstanced, (GLenum, GLint, GLsizei, GLsizei))              \
     X(const GLchar*, glGetString, (GLenum))                                        \
+    X(void, glGetFloatv, (GLenum, GLfloat*))                                       \
     X(GLenum, glGetError, (void))                                                  \
     X(void, glGenBuffers, (GLsizei, GLuint*))                                      \
     X(void, glBindBuffer, (GLenum, GLuint))                                        \

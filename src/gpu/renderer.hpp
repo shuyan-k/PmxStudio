@@ -39,6 +39,8 @@ struct RenderSettings {
     float joint_alpha = 0.75f;
     float toon = 1.0f;
     float rim = 0.18f;  // 边缘光强度
+    // 卡通明暗分界的过渡宽度（0.01 为硬边，0.45 为完全渐变）。
+    float toon_edge = 0.12f;
     Vec3 background{0.13f, 0.14f, 0.16f};
     // 方向光：light_dir 指向光源（与 shader 的 N·L 一致）。
     Vec3 light_dir{0.35f, 0.72f, 0.45f};

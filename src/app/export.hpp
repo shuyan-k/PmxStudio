@@ -14,7 +14,7 @@ namespace pmx {
 struct ExportSettings {
     int width = 1920;
     int height = 1080;
-    int supersample = 1;  // 1 / 2 / 4，渲染分辨率 = width*supersample
+    int supersample = 2;  // 1 / 2 / 4，渲染分辨率 = width*supersample
     int begin_frame = 0;
     int end_frame = 0;
     int step = 1;
