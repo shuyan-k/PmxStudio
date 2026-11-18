@@ -30,9 +30,10 @@ struct RenderSettings {
     bool wireframe = false;
     bool grid = true;
     bool outline = true;
-    // PmxEditor 风格预览：忽略材质透明度，把 alpha=0 的隐藏层（外裙、光带等）
-    // 当作不透明绘制，便于和 PmxEditor 的预览效果对照。
-    bool preview_alpha = false;
+    // 忽略材质透明度：把 alpha=0 的层（外裙、长袖、光带等）当作不透明绘制。
+    // 本模型这些材质的 diffuse.a 为 0，但 MMD 本体与 PmxEditor 都会显示它们，
+    // 因此默认开启以对齐两者的实际观感；关掉则严格按 alpha 分类绘制。
+    bool preview_alpha = true;
     float bone_alpha = 0.85f;
     float rigid_alpha = 0.55f;
     float joint_alpha = 0.75f;
