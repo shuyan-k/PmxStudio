@@ -55,7 +55,10 @@ void panel_camera(Viewer& v) {
     // 参数化视角（参考 MMD 相机面板 / Blender 相机的焦距与裁剪面）：
     // 只影响查看器与渲染输出，不写入 PMX；进入相机视角后由相机动作接管。
     ImGui::SeparatorText("当前视角");
-    ImGui::BeginDisabled(v.camera_view);
+    // 相机视角下由相机动作驱动，参数只读；没有相机动作时当前视角就是默认相机，
+    // 这些参数仍然可改，改完按 K 即可记成第一帧。
+    const bool driven_by_motion = v.camera_view && v.camera_motion.loaded();
+    ImGui::BeginDisabled(driven_by_motion);
 
     float fov = v.camera.fov;
     ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
@@ -99,7 +102,7 @@ void panel_camera(Viewer& v) {
         v.camera.ortho_scale = 30.0f;
     }
     ImGui::EndDisabled();
-    if (v.camera_view)
+    if (driven_by_motion)
         ImGui::TextDisabled("相机视角下由相机动作接管；按 0 退出后可手动调整。");
     else
         ImGui::TextDisabled("这些参数只影响查看器与渲染输出，不写入 PMX / VMD。");
@@ -112,7 +115,7 @@ void panel_camera(Viewer& v) {
                     v.camera_motion.max_frame());
         if (v.camera_motion.dirty) ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "有未保存的修改");
     } else {
-        ImGui::TextDisabled("尚未载入相机动作。");
+        ImGui::TextDisabled("当前使用默认相机（= 当前视角），还没有记录关键帧。");
     }
 
     if (ImGui::Button("导入相机 VMD…")) import_camera_dialog(v);
@@ -131,10 +134,10 @@ void panel_camera(Viewer& v) {
     ImGui::Checkbox("显示相机框", &v.camera_gizmo);
     ImGui::SetItemTooltip("在视口画出机位、镜头方向与取景锥");
 
-    ImGui::BeginDisabled(!v.camera_view);
+    ImGui::BeginDisabled(v.camera_motion.loaded() && !v.camera_view);
     if (ImGui::Button("记录当前视角为关键帧 (K)")) timeline_insert_camera_key(v);
     ImGui::EndDisabled();
-    ImGui::TextDisabled("进入相机视角后调整视角，再按 K 覆盖当前帧。");
+    ImGui::TextDisabled("在相机视角 (0) 下调整构图后按 K 记录；记录第一帧后默认相机即变为相机动作。");
     ImGui::TextDisabled("渲染输出有相机动作时按相机轨取景。");
 
     ImGui::Spacing();

@@ -1478,15 +1478,17 @@ void Viewer::toggle_camera_view() {
         return;
     }
     if (!camera_view) {
-        pmx::OrbitCamera orbit;
-        if (!camera_motion_orbit_at(motion_frame, orbit)) {
-            status = "还没有相机动作：在「相机」页导入相机 VMD，或记录当前视角";
-            return;
-        }
         camera_before_view = camera;
+        pmx::OrbitCamera orbit;
+        if (camera_motion_orbit_at(motion_frame, orbit)) {
+            camera = orbit;
+            status = "相机视角：0 返回自由视角";
+        } else {
+            // 没有相机动作时，当前视角就是默认相机：照样可以进入取景，
+            // 调整好构图后按 K 记录，第一帧记录后默认相机就变成相机动作。
+            status = "相机视角（默认相机）：调整视角后按 K 记录关键帧，0 返回自由视角";
+        }
         camera_view = true;
-        camera = orbit;
-        status = "相机视角：0 返回自由视角";
     } else {
         camera_view = false;
         camera = camera_before_view;
