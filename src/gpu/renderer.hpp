@@ -133,6 +133,10 @@ private:
     struct Texture {
         GLuint id = 0;
         bool valid = false;
+        // 贴图自身带显著透明区域（蕾丝/丝袜/发丝高光等）。PMX 里这类材质的
+        // diffuse alpha 往往仍是 1，只看材质 alpha 会把它当不透明：低 alpha
+        // 像素的黑色 RGB 被原样画出，表现为黑点、黑边。
+        bool has_alpha = false;
     };
 
     struct OverlayMesh {

@@ -1137,6 +1137,16 @@ SceneRenderer::Texture& SceneRenderer::texture_for(const Model& model, int index
                       : stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(bytes.data()),
                                               static_cast<int>(bytes.size()), &w, &h, &comp, 4);
     if (pixels) {
+        // 统计贴图透明覆盖：丝袜、蕾丝、发丝高光这类材质靠贴图 alpha 表现
+        // 半透明，但 PMX 里 diffuse alpha 仍是 1。超过 1% 的像素带透明就
+        // 认为需要走透明 pass，避免低 alpha 像素的黑色 RGB 被不透明画出。
+        std::size_t transparent = 0;
+        const std::size_t pixel_count =
+            static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+        for (std::size_t i = 0; i < pixel_count; ++i) {
+            if (pixels[i * 4 + 3] < 250) ++transparent;
+        }
+        tex.has_alpha = transparent * 100 > pixel_count;
         glGenTextures(1, &tex.id);
         glBindTexture(glc::GL_TEXTURE_2D, tex.id);
         glPixelStorei(glc::GL_UNPACK_ALIGNMENT, 4);
@@ -1482,7 +1492,14 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
             // PmxEditor 风格预览：忽略材质透明度，让 alpha=0 的隐藏层（外裙、
             // 光带等）进入不透明 pass 可见。
             if (settings.preview_alpha && a < 0.001f) a = 1.0f;
-            if (a >= 0.999f) opaque.push_back(static_cast<int>(r));
+            // 贴图自带 alpha 的材质（丝袜、蕾丝、发丝高光）必须混合：放进不透明
+            // pass 会把低 alpha 像素的黑色 RGB 原样画出来，形成密集黑点/黑边。
+            bool tex_alpha = false;
+            if (mi >= 0) {
+                const Material& mt = model.materials[static_cast<std::size_t>(mi)];
+                if (mt.texture >= 0) tex_alpha = texture_for(model, mt.texture).has_alpha;
+            }
+            if (a >= 0.999f && !tex_alpha) opaque.push_back(static_cast<int>(r));
             else alpha.push_back(static_cast<int>(r));
         }
 
@@ -1535,14 +1552,23 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
         // 倒置壳描边必须在网格之后：网格已写好深度，外壳只在轮廓外侧露出；
         // 若先画外壳会把整个可见面涂成描边色。描边又要画在透明材质之前：
         // 透明材质不写深度，若描边后画，外壳会盖在纱/布表面，露出大块描边色。
+        // 因贴图 alpha 进入透明 pass 的材质（发丝、蕾丝）也要描边——它们的
+        // diffuse alpha 仍为 1，只是贴图带透明；真正半透明/隐藏的材质保持不画。
+        auto wants_edge = [&](int ri) {
+            const MaterialRange& range = model_.ranges[static_cast<std::size_t>(ri)];
+            if (range.material < 0) return false;
+            const Material& mt = model.materials[static_cast<std::size_t>(range.material)];
+            return (mt.draw_flags & MF_EDGE) != 0 && mt.edge_size > 0.0f;
+        };
+        auto edge_in_alpha = [&](int ri) {
+            const MaterialRange& range = model_.ranges[static_cast<std::size_t>(ri)];
+            return range.material >= 0 &&
+                   model.materials[static_cast<std::size_t>(range.material)].diffuse.w >= 0.999f;
+        };
         if (settings.outline) {
             bool any_edge = false;
-            for (int ri : opaque) {
-                const MaterialRange& range = model_.ranges[static_cast<std::size_t>(ri)];
-                if (range.material >= 0 &&
-                    (model.materials[static_cast<std::size_t>(range.material)].draw_flags & MF_EDGE))
-                    any_edge = true;
-            }
+            for (int ri : opaque) any_edge = any_edge || wants_edge(ri);
+            for (int ri : alpha) any_edge = any_edge || (edge_in_alpha(ri) && wants_edge(ri));
             if (any_edge) {
                 glEnable(glc::GL_BLEND);
                 glBlendFunc(glc::GL_SRC_ALPHA, glc::GL_ONE_MINUS_SRC_ALPHA);
@@ -1552,12 +1578,7 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
                 // 外扩后的壳会落在表面之前，把整片衣服涂成描边色。
                 glEnable(glc::GL_STENCIL_TEST);
                 glStencilMask(0xFF);
-                for (int ri : opaque) {
-                    const MaterialRange& range = model_.ranges[static_cast<std::size_t>(ri)];
-                    if (range.material < 0) continue;
-                    const auto& mt = model.materials[static_cast<std::size_t>(range.material)];
-                    if (!(mt.draw_flags & MF_EDGE) || mt.edge_size <= 0.0f) continue;
-
+                auto draw_outline = [&](int ri) {
                     glClear(glc::GL_STENCIL_BUFFER_BIT);
                     // 只写模板：材质已绘制，深度相等即视为覆盖。
                     glDisable(glc::GL_CULL_FACE);
@@ -1574,6 +1595,12 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
                     glEnable(glc::GL_CULL_FACE);
                     glCullFace(glc::GL_FRONT);
                     draw_range(ri, true);
+                };
+                for (int ri : opaque) {
+                    if (wants_edge(ri)) draw_outline(ri);
+                }
+                for (int ri : alpha) {
+                    if (edge_in_alpha(ri) && wants_edge(ri)) draw_outline(ri);
                 }
                 glDisable(glc::GL_STENCIL_TEST);
                 glCullFace(glc::GL_BACK);
@@ -1597,8 +1624,14 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
                     center = transform_point(skin_cpu_[static_cast<std::size_t>(bone)], center);
                 return length(center - eye);
             };
-            std::sort(alpha.begin(), alpha.end(),
-                      [&](int a, int b) { return range_distance(a) > range_distance(b); });
+            // 距离相同时（共面叠加层，如丝袜 + 闪点）保持材质顺序，
+            // 否则 std::sort 的任意顺序会让两层前后翻转、闪烁。
+            std::sort(alpha.begin(), alpha.end(), [&](int a, int b) {
+                const float da = range_distance(a);
+                const float db = range_distance(b);
+                if (da != db) return da > db;
+                return a < b;
+            });
             glEnable(glc::GL_BLEND);
             glBlendFunc(glc::GL_SRC_ALPHA, glc::GL_ONE_MINUS_SRC_ALPHA);
             glDepthMask(glc::GL_FALSE);
