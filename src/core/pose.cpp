@@ -162,7 +162,11 @@ void Pose::apply(const MorphWeights* morph_weights) {
             if (mo.type != 2) continue;
             for (const MorphOffset& off : mo.offsets) {
                 if (off.bone < 0 || off.bone >= n) continue;
-                Quat dq = euler_to_quat(off.rot.x, off.rot.y, off.rot.z);
+                // PMX 骨骼形态的旋转是四元数（不是欧拉角），按权重从单位旋转插值：
+                // 权重 0 保持原姿态，权重 1 完整旋转，中间值走最短弧。
+                const Quat dq = slerp_quat(Quat{0.0f, 0.0f, 0.0f, 1.0f},
+                                           Quat{off.rot.x, off.rot.y, off.rot.z, off.rot.w},
+                                           weight);
                 new_rot[static_cast<std::size_t>(off.bone)] =
                     normalize(quat_mul(new_rot[static_cast<std::size_t>(off.bone)], dq));
                 new_trans[static_cast<std::size_t>(off.bone)] += off.move * weight;

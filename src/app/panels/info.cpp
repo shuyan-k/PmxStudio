@@ -121,7 +121,7 @@ void panel_info(Viewer& v) {
         if (ImGui::BeginTable("##info_stats", 3, ImGuiTableFlags_SizingStretchSame)) {
             for (const StatItem& item : stats) {
                 ImGui::TableNextColumn();
-                ImGui::Text("%zu", item.value);
+                ImGui::TextColored(pmxtheme::accent(), "%zu", item.value);
                 ImGui::TextDisabled("%s", item.label);
             }
             ImGui::EndTable();
@@ -136,7 +136,7 @@ void panel_info(Viewer& v) {
     ImGui::SeparatorText("描述");
     {
         std::string comment = model.comment;
-        const ImVec2 size(-1.0f, 96.0f);
+        const ImVec2 size(-1.0f, pmxui::scale(96.0f));
         if (ImGui::InputTextMultiline("##info_comment", &comment, size)) {
             if (comment != model.comment) {
                 const std::string next = comment;
@@ -149,7 +149,8 @@ void panel_info(Viewer& v) {
     // ------------------------------------------------------------ 文件信息
     ImGui::SeparatorText("文件信息");
     if (ImGui::BeginTable("##info_file", 2, ImGuiTableFlags_SizingFixedFit)) {
-        ImGui::TableSetupColumn("##key", ImGuiTableColumnFlags_WidthFixed, 64.0f);
+        ImGui::TableSetupColumn("##key", ImGuiTableColumnFlags_WidthFixed,
+                                pmxui::scale(64.0f));
         ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
 
         auto next_label = [](const char* label) {

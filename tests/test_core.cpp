@@ -1,4 +1,5 @@
 // 数值对拍/回归测试：PMX round-trip、姿态求值、IK、蒙皮、物理稳定步进。
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -180,6 +181,57 @@ void test_pose(const pmx::Model& model) {
     for (const pmx::Bone& b : model.bones)
         if (b.ik) ++ik_count;
     std::printf("  骨骼 %d，IK 链 %d\n", pose.n, ik_count);
+}
+
+// ---------------------------------------------------------------- 骨骼形态
+void test_bone_morph(const std::filesystem::path& dir) {
+    std::printf("[2b] 骨骼形态（四元数旋转按权重插值）\n");
+    pmx::Model model;
+    model.name = "bone-morph";
+    model.bones.resize(2);
+    model.bones[0].name = "root";
+    model.bones[0].parent = -1;
+    model.bones[1].name = "child";
+    model.bones[1].parent = 0;
+    model.bones[1].pos = {0.0f, 1.0f, 0.0f};
+
+    pmx::Morph morph;
+    morph.name = "骨骼旋转";
+    morph.type = 2;
+    pmx::MorphOffset offset;
+    offset.bone = 1;
+    offset.move = {0.0f, 1.0f, 0.0f};
+    // 绕 Z 轴 90° 的四元数。
+    const float half = pmx::kPi / 4.0f;
+    offset.rot = {0.0f, 0.0f, std::sin(half), std::cos(half)};
+    morph.offsets.push_back(offset);
+    model.morphs.push_back(morph);
+
+    pmx::Pose pose(model);
+    pmx::MorphWeights half_weight{{0, 0.5f}};
+    pose.apply(&half_weight);
+    // apply() 把形态叠加结果写进 rot / trans，base_* 仅保存未叠加的基础姿态。
+    const pmx::Quat q = pose.rot[1];
+    const float angle = 2.0f * std::acos(std::min(1.0f, std::fabs(q.w)));
+    check_near(angle, pmx::kPi / 4.0f, 1e-4, "权重 0.5 时旋转 45°");
+    // 位移是相对静止位置的偏移：0 + 0.5 × 1 = 0.5。
+    check_near(pose.trans[1].y, 0.5f, 1e-5, "骨骼形态位移按权重叠加");
+
+    pmx::MorphWeights zero_weight{{0, 0.0f}};
+    pose.apply(&zero_weight);
+    check_near(pose.rot[1].w, 1.0f, 1e-6, "权重 0 时保持原姿态");
+
+    // PMX 里骨骼形态旋转存 4 个浮点（四元数），读写必须保持一致。
+    const std::string path = (dir / "pmxstudio_bone_morph.pmx").string();
+    pmx::save_pmx(model, path);
+    const pmx::Model loaded = pmx::load_pmx(path);
+    check(loaded.morphs.size() == 1 && loaded.morphs[0].offsets.size() == 1,
+          "骨骼形态偏移读写");
+    if (!loaded.morphs.empty() && !loaded.morphs[0].offsets.empty()) {
+        const pmx::MorphOffset& back = loaded.morphs[0].offsets[0];
+        check_near(back.rot.z, offset.rot.z, 1e-6, "骨骼形态四元数 z 分量 round-trip");
+        check_near(back.rot.w, offset.rot.w, 1e-6, "骨骼形态四元数 w 分量 round-trip");
+    }
 }
 
 // ---------------------------------------------------------------- 蒙皮
@@ -487,6 +539,7 @@ int main(int argc, char** argv) {
     try {
         test_roundtrip(path, out);
         test_pose(model);
+        test_bone_morph(out.parent_path());
         test_skinning(model);
         test_physics(model);
         test_vpd(model, out.parent_path());

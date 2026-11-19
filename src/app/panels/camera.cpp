@@ -8,6 +8,7 @@
 
 #include <imgui.h>
 
+#include "app/theme.hpp"
 #include "app/timeline.hpp"
 #include "app/ui_scale.hpp"
 #include "app/viewer.hpp"
@@ -68,7 +69,8 @@ void panel_camera(Viewer& v) {
     // 35mm 全画幅（24mm 高）等效焦距：f = 12 / tan(垂直 FOV / 2)。
     float focal = 12.0f / std::tan(v.camera.fov * pmx::kPi / 360.0f);
     ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
-    if (ImGui::DragFloat("焦距##cam_focal", &focal, 0.5f, 8.0f, 300.0f, "%.1f mm"))
+    // 焦距下限与 FOV 上限一致：f = 12 / tan(120° / 2) ≈ 6.93mm。
+    if (ImGui::DragFloat("焦距##cam_focal", &focal, 0.5f, 6.93f, 300.0f, "%.1f mm"))
         v.camera.fov = 2.0f * std::atan(12.0f / std::max(1.0f, focal)) * 180.0f / pmx::kPi;
     ImGui::SetItemTooltip("按 35mm 全画幅换算，与视角 FOV 联动");
 
@@ -93,6 +95,9 @@ void panel_camera(Viewer& v) {
     ImGui::DragFloat("近裁剪面##cam_near", &v.camera.near_plane, 0.01f, 0.01f, 100.0f, "%.2f");
     ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
     ImGui::DragFloat("远裁剪面##cam_far", &v.camera.far_plane, 10.0f, 10.0f, 20000.0f, "%.0f");
+    // 近裁剪面必须小于远裁剪面，否则投影矩阵会退化、画面全黑。
+    if (v.camera.far_plane <= v.camera.near_plane)
+        v.camera.far_plane = v.camera.near_plane + 10.0f;
 
     if (ImGui::Button("重置视角参数")) {
         v.camera.fov = 38.0f;
@@ -110,20 +115,23 @@ void panel_camera(Viewer& v) {
     ImGui::Spacing();
     ImGui::SeparatorText("相机动作");
     if (v.camera_motion.loaded()) {
-        ImGui::Text("来源：%s", v.camera_motion.source.c_str());
+        ImGui::TextWrapped("来源：%s", v.camera_motion.source.c_str());
         ImGui::Text("关键帧：%d · 范围 0 – %d 帧", static_cast<int>(v.camera_motion.track.keys.size()),
                     v.camera_motion.max_frame());
-        if (v.camera_motion.dirty) ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "有未保存的修改");
+        if (v.camera_motion.dirty)
+            ImGui::TextColored(pmxtheme::warning(), "有未保存的修改");
     } else {
         ImGui::TextDisabled("当前使用默认相机（= 当前视角），还没有记录关键帧。");
     }
 
-    if (ImGui::Button("导入相机 VMD…")) import_camera_dialog(v);
+    if (ImGui::Button("导入 VMD…")) import_camera_dialog(v);
+    ImGui::SetItemTooltip("只导入 VMD 里的相机帧，不影响模型动作");
     ImGui::SameLine();
     ImGui::BeginDisabled(!v.camera_motion.loaded());
-    if (ImGui::Button("保存相机 VMD…")) v.save_camera_dialog();
+    if (ImGui::Button("保存 VMD…")) v.save_camera_dialog();
+    ImGui::SetItemTooltip("把相机动作保存为只含相机帧的 VMD");
     ImGui::SameLine();
-    if (ImGui::Button("清除相机动作")) v.clear_camera_motion();
+    if (ImGui::Button("清除")) v.clear_camera_motion();
     ImGui::EndDisabled();
 
     ImGui::Spacing();

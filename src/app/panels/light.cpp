@@ -7,6 +7,7 @@
 
 #include <imgui.h>
 
+#include "app/theme.hpp"
 #include "app/ui_scale.hpp"
 #include "app/viewer.hpp"
 
@@ -50,7 +51,7 @@ void panel_light(Viewer& v) {
     const float len = std::sqrt(v.light[0] * v.light[0] + v.light[1] * v.light[1] +
                                v.light[2] * v.light[2]);
     if (len < 1e-3f) {
-        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "方向为零：渲染时按正上方处理");
+        ImGui::TextColored(pmxtheme::warning(), "方向为零：渲染时按正上方处理");
     } else {
         ImGui::TextDisabled("归一化后：%.2f, %.2f, %.2f", v.light[0] / len, v.light[1] / len,
                             v.light[2] / len);
@@ -71,7 +72,7 @@ void panel_light(Viewer& v) {
     // ------------------------------------------------------------ 预设
     ImGui::SeparatorText("预设");
     for (int i = 0; i < static_cast<int>(sizeof(kPresets) / sizeof(kPresets[0])); ++i) {
-        if (i > 0) ImGui::SameLine();
+        if (i % 3 != 0) ImGui::SameLine();
         if (ImGui::Button(kPresets[i].name)) apply_preset(v, kPresets[i]);
     }
 

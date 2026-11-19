@@ -119,7 +119,8 @@ void panel_settings(Viewer& v) {
     // ------------------------------------------------------------ 快捷键
     ImGui::SeparatorText("快捷键");
     if (ImGui::BeginTable("##settings_shortcuts", 2, ImGuiTableFlags_SizingFixedFit)) {
-        ImGui::TableSetupColumn("##key", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+        ImGui::TableSetupColumn("##key", ImGuiTableColumnFlags_WidthFixed,
+                                pmxui::scale(150.0f));
         ImGui::TableSetupColumn("##desc", ImGuiTableColumnFlags_WidthStretch);
         struct Shortcut {
             const char* key;
@@ -132,8 +133,8 @@ void panel_settings(Viewer& v) {
             {"Ctrl+T", "预览模式：展开 / 收起时间线"},
             {"K", "时间线：当前姿态打关键帧（相机视角下记录相机帧）"},
             {"0 / 小键盘 0", "预览模式：进入 / 退出相机视角"},
-            {"Ctrl+S", "保存（仅编辑模式）"},
-            {"Ctrl+Shift+S", "另存为（仅编辑模式）"},
+            {"Ctrl+S", "保存模型（编辑）/ 保存动作（预览）"},
+            {"Ctrl+Shift+S", "模型另存为（仅编辑模式）"},
             {"Ctrl+Z", "撤销"},
             {"Ctrl+Y", "重做"},
             {"Ctrl+Shift+Z", "重做"},
