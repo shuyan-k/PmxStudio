@@ -8,21 +8,27 @@
   <a href="https://github.com/shuyan-k/PmxStudio/actions/workflows/build.yml"><img src="https://github.com/shuyan-k/PmxStudio/actions/workflows/build.yml/badge.svg?branch=main" alt="build"></a>
 </p>
 
-PMX（MikuMikuDance 模型格式）查看与编辑工具的原生 C++ 实现：C++20 + GLFW 3.4 + Dear ImGui + OpenGL 4.6 + Bullet 3.25。不依赖 Python / PyQt5，Windows 下产物为单文件 exe。第三方源码全部随仓库提供，克隆后**断网也能构建**。
+PMX（MikuMikuDance 模型格式）查看、编辑与出片工具的原生 C++ 实现：C++20 + GLFW 3.4 + Dear ImGui + OpenGL 4.6 + Bullet 3.25。不依赖 Python / PyQt5，Windows 下产物为单文件 exe；第三方源码全部随仓库提供，克隆后**断网也能构建**。
 
-Python 版（PyQt5 + OpenGL）独立维护在 [`python` 分支](https://github.com/shuyan-k/PmxStudio/tree/python)。
+除图形界面外，PmxStudio 同时是一个可被程序驱动的工具链：
+
+- **Agent API**：本地 JSON-RPC 2.0 服务，Agent / 脚本可直接载入模型、摆骨骼、设形态与材质、控制相机与动作、渲染截图、保存文件。
+- **插件系统**：稳定的 C ABI v1 动态库接口，第三方插件注册 `plugin.*` 命令，并通过宿主复用全部内置能力。
+- **批处理 CLI**：`pmxstudio-cli` 无窗口执行 JSON 脚本，用于管线集成。
 
 ## 功能
 
 - **数据**：PMX 2.0 / 2.1 读写，保留编码、索引宽度与全部字段；结构校验与统计。
-- **渲染**：GPU Compute Shader 蒙皮（BDEF1/2/4、SDEF）、材质 / 球面贴图 / Toon、模板缓冲描边、地面网格、骨骼 / 刚体 / 关节叠加层与拾取。
+- **渲染**：GPU Compute Shader 蒙皮（BDEF1/2/4、SDEF）、材质 / 球面贴图 / Toon、模板缓冲描边、贴图 alpha 感知的透明分类、地面网格、骨骼 / 刚体 / 关节叠加层与拾取。
 - **姿态**：FK、付与继承、CCD IK 与逐轴限位、骨骼拖动；VPD 导入 / 导出。
 - **动作**：VMD 导入与播放（30 fps 时间轴、逐轴贝塞尔缓动、形态轨道）、循环 / 变速 / 拖帧，单帧导出 VMD。
-- **时间线**（2.0）：底部 dope sheet 关键帧编辑（骨骼 / 形态 / 相机 / IK 轨），自动打帧、复制粘贴、框选平移，缓动曲线编辑；IK 开关轨参与求值，相机动作独立存放、单独导入 / 保存。
-- **物理烘焙**（2.0）：固定步长、单线程、从头重放的确定性烘焙，把刚体 / 柔体结果写成骨骼关键帧，可替换或合并到时间线。
-- **渲染输出**（2.0）：离屏 FBO（可选 MSAA 超采样）逐帧渲染 PNG 序列，调用 ffmpeg 编码 MP4（H.264 / CRF / 音轨）。
-- **音频**（2.0）：WAV / MP3 载入、波形显示与随动作播放，支持偏移校准；导出时可把音轨合进视频。
-- **脚本与 CLI**（2.0）：`pmxstudio-cli` 无窗口批处理，执行 JSON 脚本（批量改名 / 改刚体），供管线集成。
+- **时间线**：底部 dope sheet 关键帧编辑（骨骼 / 形态 / 相机 / IK 轨），自动打帧、复制粘贴、框选平移，缓动曲线编辑；IK 开关轨参与求值，相机动作独立存放、单独导入 / 保存。
+- **物理烘焙**：固定步长、单线程、从头重放的确定性烘焙，把刚体 / 柔体结果写成骨骼关键帧，可替换或合并到时间线。
+- **渲染输出**：离屏 FBO（可选 MSAA 超采样）逐帧渲染 PNG 序列，调用 ffmpeg 编码 MP4（H.264 / CRF / 音轨）。
+- **音频**：WAV / MP3 载入、波形显示与随动作播放，支持偏移校准；导出时可把音轨合进视频。
+- **Agent API**：127.0.0.1 上的 JSON-RPC 2.0（换行分隔），覆盖模型 / 场景 / 相机 / 动作 / 骨骼 / 形态 / 材质 / 渲染 / 插件，支持一连接多请求。
+- **插件**：C ABI 动态库，宿主自动扫描 `plugins/` 与 `PMX_PLUGIN_PATH`；插件命令与内置命令共用一张分发表，可被 Agent API 直接调用。
+- **脚本与 CLI**：`pmxstudio-cli` 无窗口批处理，执行 JSON 脚本（批量改名 / 改刚体参数），与 Agent API 共用 [json.hpp](src/core/json.hpp) 解析器。
 - **形态**：顶点 / UV / 材质 / 骨骼 / 组 / 翻转 / 刚体偏移，滑杆预览。
 - **物理**：Bullet 刚体、6DOF 弹簧关节与柔体（`btSoftBody`），固定 1/120 步进、每帧最多 10 个子步，可边演算边摆姿。
 - **编辑**：编辑模式十个检查器面板（信息 / 骨骼 / 表示枠 / 顶点 / 材质 / 面 / 形态 / 物理 / 柔体 / 设置），结构增删与索引重映射，撤销 / 重做，主题与偏好持久化；退出时有未保存修改会先弹确认框。
@@ -64,6 +70,244 @@ cmake --build build -j"$(nproc)"
 
 需要 `build-essential cmake ninja-build libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev`；中文界面另需 Noto CJK 或文泉驿字体（`fonts-noto-cjk`）。查看器依赖 X11 显示服务，纯 SSH 环境只能构建并运行无窗口测试。
 
+### 启动参数
+
+```text
+pmxstudio [选项] [模型.pmx]
+
+--api              启动 Agent API（仅监听 127.0.0.1）
+--api-port N       指定端口（默认 8422；0 表示由系统分配）
+--api-port=N       同上
+--no-plugins       跳过插件扫描
+```
+
+未指定模型时依次使用偏好里的 `last_model` 与 `tests/test_model.pmx`。API 与插件不依赖窗口是否可见，无头环境可配合 Xvfb 使用。
+
+## Agent API
+
+### 启动与协议
+
+```bash
+# 默认端口 8422
+./build/pmxstudio --api tests/test_model.pmx
+
+# 自定义端口
+./build/pmxstudio --api --api-port 9000 model.pmx
+```
+
+- 传输：TCP，`127.0.0.1`，**换行分隔的单行 JSON**；一个连接可连续发送多条请求。
+- 报文：JSON-RPC 2.0。`method` 为下表方法名，`params` 为对象；成功返回 `result`，失败返回 `error`。
+- 通知：不带 `id` 的请求会执行但不应答。
+- 限制：单条请求 ≤ 4 MiB，最多 16 个连接，每帧最多执行 64 条请求；超出预算的请求留到下一帧。
+- 安全：只绑定回环地址，没有鉴权。不要把端口转发到公网；插件与 API 拥有与界面相同的本地权限。
+
+请求 / 响应示例：
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"model.info"}
+{"jsonrpc":"2.0","id":1,"result":{"loaded":true,"name":"测试模型","vertices":72002,"bones":7}}
+```
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"bone.pose","params":{"bone":"頭","euler":[0,20,0]}}
+{"jsonrpc":"2.0","id":2,"result":{"index":2,"name":"頭","rotation":[-0.0,0.173648,0.0,0.984808],"translation":[0,0,0]}}
+```
+
+错误码：`-32700` JSON 解析失败、`-32600` 非法请求、`-32601` 未知方法、`-32603` 内部错误、`-32000` 命令执行失败（`message` 为可直接展示的中文原因）。
+
+### Python 客户端示例
+
+```python
+import json
+import socket
+
+
+class PmxClient:
+    def __init__(self, port=8422):
+        self.sock = socket.create_connection(("127.0.0.1", port))
+        self.stream = self.sock.makefile("rwb")
+        self.next_id = 1
+
+    def call(self, method, params=None):
+        request = {"jsonrpc": "2.0", "id": self.next_id, "method": method}
+        if params is not None:
+            request["params"] = params
+        self.next_id += 1
+        self.stream.write(json.dumps(request, ensure_ascii=False).encode("utf-8") + b"\n")
+        self.stream.flush()
+        response = json.loads(self.stream.readline().decode("utf-8"))
+        if "error" in response:
+            raise RuntimeError(response["error"]["message"])
+        return response["result"]
+
+    def close(self):
+        self.stream.close()
+        self.sock.close()
+
+
+client = PmxClient()
+print(client.call("model.load", {"path": "C:/Models/miku.pmx"}))
+print(client.call("animation.load", {"path": "C:/Motions/wave.vmd"}))
+print(client.call("animation.play", {"playing": False, "frame": 42}))
+print(client.call("bone.pose", {"bone": "頭", "euler": [0, 20, 0]}))
+print(client.call("scene.camera", {"target": [0, 12, 0], "distance": 35, "yaw": 0.4}))
+print(client.call("scene.render", {"path": "shot.png", "width": 1280, "height": 720}))
+client.close()
+```
+
+### 命令参考
+
+参数名带 `?` 表示可选；`index` 与名称参数二选一。
+
+#### 系统与插件
+
+| 方法 | 参数 | 说明 |
+| --- | --- | --- |
+| `system.ping` | — | 连通性检查，返回 `{"pong":true,"time":…}` |
+| `system.info` | — | 应用版本、平台、API / 插件 ABI 版本、模型与插件概况 |
+| `plugin.list` | — | 插件搜索路径、已加载插件、命令表、错误与日志 |
+| `plugin.<名称>` | 由插件定义 | 第三方插件注册的命令（见「插件系统」） |
+
+#### 模型
+
+| 方法 | 参数 | 说明 |
+| --- | --- | --- |
+| `model.load` | `path` | 载入 PMX。相对路径先按进程工作目录解析，再按当前模型目录解析 |
+| `model.info` | — | 名称 / 注释 / 版本 / 编码 / 附加 UV、各类计数、包围盒、`dirty` |
+| `model.bbox` | — | 仅返回 `{"min":[x,y,z],"max":[x,y,z]}` |
+| `model.save` | `path` | 保存 PMX（仅编辑模式） |
+| `model.script` | `commands` 或 `script` 或 `path` | 执行 JSON 批处理（仅编辑模式），命令见 `pmxstudio-cli` 脚本格式 |
+
+#### 场景与相机
+
+| 方法 | 参数 | 说明 |
+| --- | --- | --- |
+| `scene.state` | — | 模式、物理开关、选择、撤销 / 重做标签、动作状态、状态栏消息 |
+| `scene.mode` | `preview` | 切换编辑 / 预览模式 |
+| `scene.camera` | `target?` `distance?` `yaw?` `pitch?` `fov?` `ortho?` `ortho_scale?` `near?` `far?` `view?` | 读 / 写自由相机；`view` 切换相机视角 |
+| `scene.camera_fit` | — | 按模型包围盒适配视图 |
+| `scene.settings` | 见下表 | 读 / 写显示与物理参数，返回修改后的完整快照 |
+| `scene.select` | `kind`，`index` 或 `name` | `kind` 取 `bone` / `material` / `morph` / `rigid` / `joint` / `soft` / `frame` / `none` |
+| `scene.render` | `path`，`width?` `height?` `samples?` `overlays?` `frame?` | 同步离屏渲染当前帧并写 PNG；默认不画骨骼 / 刚体 / 网格等辅助层 |
+| `scene.undo` / `scene.redo` | — | 撤销 / 重做并返回新的场景状态 |
+
+`scene.settings` 可写键：
+
+| 类型 | 键 |
+| --- | --- |
+| 布尔 | `show_mesh` `show_bones` `show_rigid` `show_joints` `use_gpu` `wireframe` `grid` `outline` `preview_alpha` `show_light` `camera_gizmo` `ground` `physics_enabled` |
+| 数值 | `bone_alpha` `rigid_alpha` `joint_alpha` `toon` `rim` `toon_edge` `light_intensity` `gravity` `iterations` |
+| 三维向量 | `background` `light_dir` `light_color` `ambient_color` |
+
+#### 动作、骨骼、形态、材质
+
+| 方法 | 参数 | 说明 |
+| --- | --- | --- |
+| `animation.load` | `path`，`camera_only?` `preview?` | 导入 VMD。默认自动切到预览模式；`camera_only=true` 只导入相机轨 |
+| `animation.play` | `playing?` `frame?` `speed?` `loop?` | 播放 / 暂停 / 跳帧 / 变速 / 循环；跳帧会立即重算姿态 |
+| `animation.state` | — | 帧号、总帧、播放状态、轨道与匹配数量、缺失骨骼名、相机轨概况 |
+| `bone.list` | `filter?` | 骨骼索引 / 名称 / 英文名 / 父级 / 位置 / 标志（可子串过滤） |
+| `bone.pose` | `index` 或 `bone`，`rotation?` 或 `euler?`，`translation?`，`reset?`，`ik_enabled?` | 写姿态覆盖；`euler` 为角度制；`reset=true` 清除该骨骼覆盖 |
+| `morph.list` | — | 形态索引 / 名称 / 面板 / 类型 / 偏移数 / 当前权重 |
+| `morph.set` | `index` 或 `morph`，`weight` | 设置形态权重并立即重建蒙皮 |
+| `material.list` | — | 材质名、漫反射、贴图、球面 / Toon、标志、面数 |
+| `material.set` | `index` 或 `material`，`alpha?` `diffuse?` `double_sided?` `edge?` `edge_size?` `texture?` | 修改材质（仅编辑模式） |
+
+行为约定：
+
+- `model.save`、`model.script`、`material.set` 会修改模型数据，只在**编辑模式**可用；预览模式返回错误，先调用 `scene.mode {"preview":false}`。
+- `bone.pose` 与 `morph.set` 只影响**当前姿态**，不写模型文件；保存模型不会带上这些临时变形。
+- `animation.load` / `animation.play` 需要预览模式，未处于预览模式时会自动切换。
+- `scene.render` 会先应用当前的形态与姿态；带 `frame` 时会先把动作跳到该帧。`samples` 为 MSAA 采样数（1–4）。
+
+## 插件系统
+
+### ABI 概览
+
+头文件：[include/pmxstudio/plugin_api.h](include/pmxstudio/plugin_api.h)。
+
+插件是动态库（Windows `.dll` / Linux `.so` / macOS `.dylib`），导出两个 C 符号：
+
+```cpp
+extern "C" PMX_PLUGIN_EXPORT int  PMX_PLUGIN_CALL pmx_plugin_init(const PmxHostV1* host);
+extern "C" PMX_PLUGIN_EXPORT void PMX_PLUGIN_CALL pmx_plugin_shutdown(void);  // 可选
+```
+
+宿主提供 `PmxHostV1`：
+
+| 字段 | 作用 |
+| --- | --- |
+| `abi_version` | 必须等于 `PMX_PLUGIN_ABI_VERSION`（当前 1），插件应在 `init` 里校验 |
+| `log(user, level, message)` | 写宿主日志（`level`：0 信息 / 1 警告 / 2 错误），同时出现在 `plugin.list` |
+| `register_command(user, name, summary, fn, command_user)` | 注册命令；`name` 必须以 `plugin.` 开头且全局唯一 |
+| `invoke(user, method, params_json, out, out_size)` | 调用与 Agent API 相同的内置命令；禁止调用 `plugin.*` 以避免递归 |
+
+命令函数签名固定为：
+
+```c
+int (*PmxCommandFn)(void* command_user, const char* params_json, char* out, int out_size);
+```
+
+返回 0 表示成功，`out` 必须是 UTF-8 JSON 文本（宿主会校验可解析性）；返回非 0 时 `out` 的内容作为错误消息。输出缓冲区上限 `PMX_PLUGIN_MAX_OUTPUT`（64 KiB），字符串不跨模块释放，避免 CRT / 运行时不一致。
+
+### 搜索路径
+
+按顺序扫描以下目录，加载 `.dll` / `.so` / `.dylib`（文件名即插件名，重名跳过）：
+
+1. 可执行文件旁的 `plugins/`
+2. 进程工作目录下的 `plugins/`
+3. 环境变量 `PMX_PLUGIN_PATH` 中的目录（Windows 用 `;` 分隔，其他平台用 `:`）
+
+初始化失败、缺少 `pmx_plugin_init`、命令名非法或重复都会记录到 `plugin.list` 的 `errors` 与宿主日志，其他插件不受影响。`--no-plugins` 可完全跳过扫描。
+
+### 示例插件
+
+完整示例见 [examples/plugins/demo/plugin.cpp](examples/plugins/demo/plugin.cpp)，包含回显、模型统计、转交 `bone.pose` 与写日志四个命令。最小插件：
+
+```cpp
+#include "pmxstudio/plugin_api.h"
+
+#include <cstdio>
+
+static int PMX_PLUGIN_CALL hello(void*, const char*, char* out, int out_size) {
+    std::snprintf(out, static_cast<std::size_t>(out_size), "{\"hello\":\"world\"}");
+    return 0;
+}
+
+extern "C" PMX_PLUGIN_EXPORT int PMX_PLUGIN_CALL
+pmx_plugin_init(const PmxHostV1* host) {
+    if (!host || host->abi_version != PMX_PLUGIN_ABI_VERSION) return 1;
+    return host->register_command(host->user, "plugin.hello", "示例命令", &hello, nullptr);
+}
+```
+
+独立构建并安装：
+
+```bash
+# Linux / macOS
+cmake -S examples/plugins/demo -B build-demo -DCMAKE_BUILD_TYPE=Release
+cmake --build build-demo
+mkdir -p plugins
+cp build-demo/demo.so plugins/
+```
+
+```powershell
+# Windows（多配置生成器产物在 Release\）
+cmake -S examples\plugins\demo -B build-demo
+cmake --build build-demo --config Release
+mkdir plugins
+copy build-demo\Release\demo.dll plugins\
+```
+
+之后启动查看器，即可通过 API 调用：
+
+```json
+{"jsonrpc":"2.0","id":3,"method":"plugin.demo.echo","params":{"message":"你好"}}
+{"jsonrpc":"2.0","id":4,"method":"plugin.demo.model_summary"}
+```
+
+插件以宿主进程权限运行、可直接调用全部 API 命令；只安装可信来源的动态库。
+
 ## 操作
 
 | 操作 | 行为 |
@@ -95,7 +339,7 @@ cmake --build build -j"$(nproc)"
 
 标题栏左侧的「编辑 | 预览」按钮（或 `Ctrl+M`）切换当前视图模式，参考 PmxEditor 的编辑 / 预览分工：
 
-- **编辑模式**：完整检查器（信息 / 骨骼 / 表示枠 / 顶点 / 材质 / 面 / 形态 / 物理 / 柔体 / 设置），可修改模型、撤销重做与保存；视图只显示模型原始姿态——不叠加 VMD 动作、不跑 IK 求解、不演算物理，VPD / VMD 导入入口在菜单里置灰（拖入会提示先切到预览模式）。
+- **编辑模式**：完整检查器（信息 / 骨骼 / 表示枠 / 顶点 / 材质 / 面 / 形态 / 物理 / 柔体 / 设置），可修改模型、撤销重做与保存；视图只显示模型原始姿态——不叠加 VMD 动作、不跑 IK 求解、不演算物理，VPD / VMD 导入入口在菜单里置灰（拖入会提示先切到预览模式）。Agent API 的模型编辑命令也要求处于编辑模式。
 - **预览模式**：相当于 PmxEditor 的 TransformView——右键旋转、左键位移都只影响当前姿态，不落盘。检查器只剩「检索 / 动作 / 时间线 / 烘焙 / 输出 / 物理 / 形态 / 设置」八个控制标签，菜单里的保存 / 另存为 / 导出 VPD / 导出 VMD 置灰（`Ctrl+S` 改为保存动作 VMD），撤销只能撤销摆姿条目（数据修改需切回编辑模式撤销）。物理开关与参数、VMD 播放、形态滑杆、显示开关照常可用。
 
 进入预览时按当前动作帧重新落姿态，物理以该帧为初始姿态复位，之后才允许播放动作 / 演算 / 摆姿；切回编辑时暂停动作、清零形态权重并 `reset()` 姿态，物理回写与临时摆姿都不会残留到数据视图。两种模式共用同一个撤销栈。
@@ -119,11 +363,11 @@ cmake --build build -j"$(nproc)"
 - **柔体**：PMX 2.1 柔体参数、锚点与固定点编辑。
 - **设置**：叠加层不透明度、重力 / 迭代 / 地面、配置文件路径、快捷键。显示开关、物理开关与深浅主题统一在顶部「视图」菜单。
 
-预览模式只有九个控制标签：
+预览模式只有八个控制标签：
 
 - **检索**：按名称 / 中文 / 英文名快速查找骨骼、刚体、关节（`Ctrl+F` 直达并聚焦搜索框，回车选中第一项），点行即选中；选中骨骼后可在视口中左键拖动位移、右键拖动旋转，选中的隐藏对象会临时显示并高亮。
 - **动作**：VMD 导入 / 清除、播放 / 暂停 / 循环 / 变速、帧滑杆与匹配统计（未匹配轨道逐条列出）。播放中手动拖动骨骼只取消该骨骼的动作，其余骨骼继续受动作驱动。
-- **相机**（2.0）：相机动作是独立的一份数据（与模型动作共用一个 VMD 文件时可自动拆分）。「相机」页可单独导入 / 保存 / 清除相机 VMD、记录当前视角为关键帧；视口用橙色线框画出机位、镜头方向、注视点与取景锥，`0`（或小键盘 `0`）进入相机视角，按输出宽高比显示取景框并压暗框外区域。渲染输出有相机动作时按相机轨取景。
+- **相机**：相机动作是独立的一份数据（与模型动作共用一个 VMD 文件时可自动拆分）。「相机」页可单独导入 / 保存 / 清除相机 VMD、记录当前视角为关键帧；视口用橙色线框画出机位、镜头方向、注视点与取景锥，`0`（或小键盘 `0`）进入相机视角，按输出宽高比显示取景框并压暗框外区域。渲染输出有相机动作时按相机轨取景。
 - **时间线**：展开底部 dope sheet（`Ctrl+T`），骨骼 / 形态 / 相机 / IK 四类轨道的关键帧查看与编辑；`K` 在当前帧打帧，支持自动打帧、复制粘贴、整体平移与缓动曲线调整。相机行标注为「相机动作（独立）」，没有模型动作也能单独编辑与播放。
 - **烘焙**：把当前动作 + 物理演算按固定步长烘焙成骨骼关键帧，可限定帧范围、替换或追加到时间线。
 - **输出**：分辨率 / 超采样 / 帧范围 / CRF 设置，离屏渲染 PNG 序列并调用 ffmpeg 编码视频；音频载入、波形、偏移校准与导出合轨。
@@ -133,12 +377,15 @@ cmake --build build -j"$(nproc)"
 
 ## 目录结构
 
-```
+```text
 .
-├─ CMakeLists.txt            构建入口：pmx_core / pmx_gpu / pmxstudio / pmx_tests
+├─ CMakeLists.txt            构建入口：pmx_core / pmx_gpu / pmxstudio / pmxstudio-cli / pmx_tests
 ├─ cmake/Dependencies.cmake  依赖解析（本地 third_party 优先，可选联网兜底）
 ├─ build.bat                 Windows 一键配置 + 编译
 ├─ setup_linux.sh            Linux 一键装依赖 + 配置 + 编译 + 自测
+├─ include/pmxstudio/
+│  └─ plugin_api.h           插件 ABI v1（C 头文件）
+├─ examples/plugins/demo/    示例插件（独立 CMake 工程）
 ├─ src/
 │  ├─ core/                  与图形无关的纯逻辑，可单测
 │  │  ├─ pmx.hpp             PMX 数据模型（顶点 SoA、骨骼、材质、形态、刚体、关节、柔体）
@@ -150,6 +397,11 @@ cmake --build build -j"$(nproc)"
 │  │  ├─ skinning.hpp/.cpp   CPU 蒙皮参考实现（GPU 结果校验用）
 │  │  ├─ vpd.hpp/.cpp        VPD 解析、应用、文本生成与导出
 │  │  ├─ vmd.hpp/.cpp        VMD 解析、轨道绑定、逐帧采样与单帧导出
+│  │  ├─ anim.hpp/.cpp       AnimClip / CameraTrack 与时间线求值
+│  │  ├─ bake.hpp/.cpp       确定性物理烘焙
+│  │  ├─ audio.hpp/.cpp      音频解码与波形
+│  │  ├─ json.hpp/.cpp       最小 JSON 解析 / 序列化（Agent API / 插件 / 脚本共用）
+│  │  ├─ script.hpp/.cpp     JSON 批处理命令
 │  │  ├─ text_codec.hpp      名称编码：CP932 ↔ UTF-8 与宽松匹配键
 │  │  ├─ name_zh.hpp/.cpp    日文 / 英文名称 → 中文对照词表（八类，只读）
 │  │  ├─ fs.hpp              路径编码辅助（UTF-8 ↔ 宽字符）
@@ -157,23 +409,31 @@ cmake --build build -j"$(nproc)"
 │  ├─ gpu/
 │  │  ├─ gl_api.hpp/.cpp     OpenGL 4.6 函数指针加载器（不用 GLAD）
 │  │  ├─ shader.hpp/.cpp     着色器编译 / 链接与 uniform 缓存
-│  │  └─ renderer.cpp        渲染核心：蒙皮 dispatch、材质、球面贴图、描边、叠加层、拾取
+│  │  ├─ toon.hpp            主网格 / 描边着色器源码
+│  │  ├─ renderer.hpp/.cpp   渲染核心：蒙皮 dispatch、材质、球面贴图、描边、叠加层、拾取
+│  │  └─ offscreen.hpp/.cpp  离屏 FBO 与 PNG 回读
 │  ├─ physics/
 │  │  ├─ physics.cpp         Bullet 世界构建、6DOF 弹簧关节、刚体-骨骼绑定、步进
 │  │  └─ softbody.cpp        柔体（btSoftBody）：节点、锚点、固定点、弯曲 / 簇、回读
-│  └─ app/
-│     ├─ main.cpp            GLFW + ImGui 查看器：窗口、输入、文件对话框、拖放、快捷键
-│     ├─ viewer.hpp          查看器状态：模型、姿态、选择、撤销栈、编辑入口
-│     ├─ viewer_edit.cpp     编辑 / 撤销 / 重做与运行时重建（Pose / 网格 / 物理）
-│     ├─ document_ops.*      结构性增删与索引重映射
-│     ├─ theme.*             亮 / 暗主题与 settings.ini 偏好持久化
-│     ├─ camera.cpp          轨道相机（目标点 + 球面角 + 距离）
-│     └─ panels/             检查器面板：info / bone / frame / vertex / material /
-│                            face / morph / motion / physics / soft / settings
+│  ├─ app/
+│  │  ├─ main.cpp            GLFW + ImGui 查看器：窗口、输入、文件对话框、拖放、快捷键
+│  │  ├─ api.hpp/.cpp        Agent API：JSON-RPC / TCP 与内置命令实现
+│  │  ├─ plugin.hpp/.cpp     插件扫描、动态加载与命令分发
+│  │  ├─ viewer.hpp          查看器状态：模型、姿态、选择、撤销栈、编辑入口
+│  │  ├─ viewer_edit.cpp     编辑 / 撤销 / 重做与运行时重建（Pose / 网格 / 物理）
+│  │  ├─ document_ops.*      结构性增删与索引重映射
+│  │  ├─ timeline.*          时间线数据与交互
+│  │  ├─ export.*            渲染输出 / 音频导出
+│  │  ├─ theme.*             亮 / 暗主题与 settings.ini 偏好持久化
+│  │  ├─ camera.cpp          轨道相机（目标点 + 球面角 + 距离）
+│  │  └─ panels/             检查器面板：info / bone / frame / vertex / material /
+│  │                         face / morph / motion / physics / soft / settings 等
+│  └─ cli/main.cpp           无窗口批处理入口
 ├─ assets/                   应用图标（icon.png / icon.ico / icon.rc）
+├─ docs/                     Roadmap 等文档
 ├─ tests/
 │  ├─ test_core.cpp          无窗口的对照测试
-│  ├─ parity_probe.cpp       PMX 读写探针（供 Python 侧一致性校验调用）
+│  ├─ parity_probe.cpp       PMX 读写探针
 │  ├─ test_model.pmx         测试模型（含贴图）
 │  └─ tex_body.png / sph.png 测试贴图
 └─ third_party/              自带源码：GLFW 3.4 / Dear ImGui v1.92.9b / stb / Bullet 3.25
@@ -190,19 +450,21 @@ cmake --build build -j"$(nproc)"
 
 若本地副本缺失，可加 `-DPMX_FETCH_DEPS=ON` 从镜像联网拉取（默认 `https://gitee.com/mirrors`，可用 `-DPMX_DEPS_MIRROR` 修改）。
 
+Agent API 与插件加载只使用系统 socket / `dlopen` / `LoadLibrary`，不引入新的第三方依赖（Windows 链接 `ws2_32`）。
+
 ## CMake 选项
 
 | 选项 | 默认 | 说明 |
 | --- | --- | --- |
-| `PMX_BUILD_APP` | ON | 构建 GLFW + ImGui 查看器；OFF 时只编核心库、CLI 与测试（无需 X11 依赖） |
+| `PMX_BUILD_APP` | ON | 构建 GLFW + ImGui 查看器（含 Agent API 与插件宿主）；OFF 时只编核心库、CLI 与测试（无需 X11 依赖） |
 | `PMX_BUILD_CLI` | ON | 构建无界面批处理工具 `pmxstudio-cli` |
 | `PMX_BUILD_TESTS` | ON | 构建 `pmx_tests`、新增模块测试与 `pmx_parity_probe` |
 | `PMX_ENABLE_PHYSICS` | ON | 编译 Bullet 物理后端；关闭后物理接口退化为空实现 |
 | `PMX_MODULE_TIMELINE` | ON | 时间线与关键帧编辑（`anim.cpp` + 时间线 UI） |
 | `PMX_MODULE_BAKE` | ON | 确定性物理烘焙 |
-| `PMX_MODULE_RENDER_OUT` | ON | 离屏渲染与 PNG / 视频输出 |
+| `PMX_MODULE_RENDER_OUT` | ON | 离屏渲染与 PNG / 视频输出（`scene.render` 依赖此项） |
 | `PMX_MODULE_AUDIO` | ON | 音频轨（miniaudio，Windows 播放 / 其他平台仅解码波形） |
-| `PMX_MODULE_SCRIPT` | ON | JSON 批处理脚本与 CLI |
+| `PMX_MODULE_SCRIPT` | ON | JSON 批处理脚本与 CLI（`model.script` 依赖此项） |
 | `PMX_STATIC_RUNTIME` | ON | MSVC 静态 CRT（`/MT`），产物为不依赖 VC 运行时 DLL 的单文件 exe |
 | `PMX_USE_SYSTEM_BULLET` | OFF | 使用系统安装的 Bullet 而非仓库内源码 |
 | `PMX_FETCH_DEPS` | OFF | 本地 `third_party` 缺失时联网拉取依赖 |
@@ -211,7 +473,7 @@ cmake --build build -j"$(nproc)"
 
 ## 测试
 
-`pmx_tests` 共 237 项检查，不创建窗口；2.0 另加三组模块测试（`pmx_tests_anim`、`pmx_tests_bake`、`pmx_tests_script`）：
+`pmx_tests` 共 237 项检查，不创建窗口；另有三组模块测试（`pmx_tests_anim`、`pmx_tests_bake`、`pmx_tests_script`）：
 
 ```powershell
 build\Release\pmx_tests.exe      # Windows
@@ -234,10 +496,12 @@ ctest --test-dir build           # 或一次跑全部
 8. 烘焙（`bake`）：固定步长重放的逐位一致、刚体骨骼写出、预热与范围裁剪。
 9. 脚本（`script`）：JSON 解析（含 `\u` 代理对）、批量改名 / 刚体参数、错误信息。
 
+Agent API 与插件的手工验收方式：用 Xvfb 或无头桌面启动 `pmxstudio --api`，按「Python 客户端示例」发请求；`plugin.list` 应列出已加载插件，`scene.render` 生成的 PNG 可直接检查。
+
 其他调试手段：
 
 - `PMX_GPU_CHECK=1` 启动，首次 GPU 蒙皮后打印与 CPU 参考实现的最大偏差与非法分量顶点数。
-- `pmx_parity_probe` 提供与 Python 版逐字段读写比对探针；比对脚本 `tools/parity_check.py` 位于 `python` 分支。
+- `pmx_parity_probe` 提供与 Python 版逐字段读写比对探针。
 
 ## 实现说明
 
@@ -253,7 +517,7 @@ MMD 使用左手坐标系，PMX 面片在 OpenGL 右手系视图中是**顺时�
 - **球面贴图**：按**相机空间**法线的 XY 采样（`mat3(uView) * N`），对应 MMD 的 Multiply / Add / 混合三种 `sphere_mode`；相机空间保证高光随视角滑动，世界空间法线做不到这一点。
 - **边缘光**：`smoothstep(0.6, 1.0, 1 - N·V)` 乘本体色叠加，强度由「设置 → 卡通着色 → 边缘光」控制，默认 0.18，设 0 即回到 MMD 原版观感。
 
-### 描边
+### 描边与透明
 
 倒置壳描边必须在主网格**之后**绘制：网格先写好深度，外壳只在外轮廓露出。绘制时 `glCullFace(GL_FRONT)`、`glDepthMask(GL_FALSE)` 并混合，结束后恢复。顺序颠倒会让整个可见面变成描边色。
 
@@ -261,7 +525,7 @@ MMD 使用左手坐标系，PMX 面片在 OpenGL 右手系视图中是**顺时�
 
 仅靠深度裁剪对**单层布料**不够：外扩后的壳可能落在表面之前，把整片衣服涂成描边色。因此先关闭颜色写入、用 `GL_LEQUAL` 把当前材质已覆盖的像素写进模板（值 1），再用 `GL_NOTEQUAL 1` 绘制外壳，只保留轮廓外侧。窗口创建时显式请求 8 位模板缓冲。
 
-半透明材质（`diffuse.w < 1`）最后绘制并关闭深度写入；绘制前按面区间中心到相机的距离**从远到近**排序，中心随区间首顶点的最大权重骨骼蒙皮变换，避免固定材质顺序在转动视角后出现前后颠倒。
+材质分类不只看 `diffuse.w`：上传贴图时统计透明像素占比，贴图自身带显著 alpha 的材质（蕾丝、丝袜、发丝等）即使 `diffuse.w == 1` 也进入透明 pass，避免低 alpha 像素的黑色 RGB 被当作不透明像素画出。半透明材质最后绘制并关闭深度写入；绘制前按面区间中心到相机的距离从远到近排序，距离相同时按材质顺序稳定排序。
 
 ### GPU 蒙皮
 
@@ -293,11 +557,11 @@ Compute Shader（GLSL 460）按 64 顶点一组 dispatch，SSBO 绑定 0~4：骨
 
 ### 撤销 / 重做
 
-两条独立栈：整模型快照（12 步，另受 256 MiB 内存预算约束，超预算时从最旧的快照开始丢弃，但至少保留 2 条）用于结构性编辑，轻量姿态条目（12 步）用于骨骼拖动 / 形态滑杆。同一 `coalesce` 键在 0.9 秒内连续操作合并为一条，拖动不会产生上百条记录。结构变化后 `clamp_selection` 修正选中索引，`refresh_after_edit` 按 `kind`（bone / material / morph / physics / physics_live / soft / structure / model）重建 Pose、网格与物理世界，并尽量保留姿态、形态权重、相机与选择。
+两条独立栈：整模型快照（12 步，另受 256 MiB 内存预算约束，超预算时从最旧的快照开始丢弃，但至少保留 2 条）用于结构性编辑，轻量姿态条目（12 步）用于骨骼拖动 / 形态滑杆。同一 `coalesce` 键在 0.9 秒内连续操作合并为一条，拖动不会产生上百条记录。结构变化后 `clamp_selection` 修正选中索引，`refresh_after_edit` 按 `kind`（bone / material / morph / physics / physics_live / soft / structure / model）重建 Pose、网格与物理世界，并尽量保留姿态、形态权重、相机与选择。Agent API 的 `model.script` / `material.set` 也走同一入口，因此可被 `scene.undo` 撤销。
 
 ### 与 PmxEditor 的分工对照
 
-PmxEditor（`F:\MyProject\MMD\05_工具\PmxEditor`）把「改数据」和「试姿态」拆成三块独立屏幕，而不是一个窗口切两种模式：
+PmxEditor 把「改数据」和「试姿态」拆成三块独立屏幕，而不是一个窗口切两种模式：
 
 | 屏幕 | 角色 | 画的是什么 |
 | --- | --- | --- |
@@ -338,7 +602,6 @@ PmxEditor（`F:\MyProject\MMD\05_工具\PmxEditor`）把「改数据」和「试
 
 ### 偏好持久化
 
-
 主题、显示开关、叠加层不透明度、重力 / 迭代 / 地面等写入 `%APPDATA%/PmxStudioCpp/settings.ini`（UTF-8 key=value）。启动时先读偏好再加载模型，`last_model` 只在没有命令行参数时生效；退出时保存。
 
 ### 分辨率与 DPI 适配
@@ -363,19 +626,15 @@ VMD 以 30 fps 计时，播放时按 `dt * 30 * 速度` 推进帧号，循环用
 
 骨骼关键帧末尾的 64 字节是 4×4 插值表：行是 X1 / Y1 / X2 / Y2，列是 X / Y / Z / 旋转。每个轴对称取 `x1 = ip[a]`、`y1 = ip[4+a]`、`x2 = ip[8+a]`、`y2 = ip[12+a]`，除以 127 得到三次贝塞尔控制点；位移三轴各用一条曲线，旋转对四元数做 slerp，形态权重线性插值。曲线退化为直线时直接返回 `t`，省去迭代。导出默认写 MMD 的 20 / 20 / 107 / 107 缓动值。
 
-求值时先 `pose.reset()`，把轨道写入 `base_rot` / `base_trans`，再交给 `apply()` 叠加骨骼形态，随后照常走 IK 与 `world()`，与 VPD 的写入方式一致。轨道按「先精确匹配名称与英文名，再忽略空格 / 下划线并小写」的顺序查找；未匹配的名称收集到绑定结果里，在「动作」面板逐条列出。播放不写撤销栈；拖动骨骼只取消被拖骨骼的动作，其余骨骼继续按动作播放，避免下一帧把手改的姿态整体覆盖。
+求值时先 `pose.reset()`，把轨道写入 `base_rot` / `base_trans`，再交给 `apply()` 叠加骨骼形态，随后照常走 IK 与 `world()`，与 VPD 的写入方式一致。轨道按「先精确匹配名称与英文名，再忽略空格 / 下划线并小写」的顺序查找；未匹配的名称收集到绑定结果里，在「动作」面板与 `animation.state` 中列出。播放不写撤销栈；拖动骨骼只取消被拖骨骼的动作，其余骨骼继续按动作播放，避免下一帧把手改的姿态整体覆盖。
 
 ## 已知限制
 
-- VMD 灯光 / 阴影轨道只统计数量，不参与播放；**相机帧作为独立相机动作参与播放与取景**（导入时从动作里拆出，可单独保存为相机 VMD）；**表示枠 / IK 帧参与播放**：按帧取最近的开关状态，关掉的 IK 链不再求解，骨骼改由动作轨道直接驱动（MMD 的足 IK 开关就是这么工作的）；动作 VMD 导出只写当前单帧的骨骼与形态，不含相机帧。
-- 文件对话框封装为 Windows 专用；Linux 下通过命令行参数或拖放打开文件。
+- VMD 灯光 / 阴影轨道只统计数量，不参与播放；相机帧作为独立相机动作参与播放与取景（导入时从动作里拆出，可单独保存为相机 VMD）；表示枠 / IK 帧参与播放：按帧取最近的开关状态，关掉的 IK 链不再求解，骨骼改由动作轨道直接驱动（MMD 的足 IK 开关就是这么工作的）；动作 VMD 导出只写当前单帧的骨骼与形态，不含相机帧。
+- 文件对话框封装为 Windows 专用；Linux 下通过命令行参数、Agent API 的 `model.load` 或拖放打开文件。
 - IK 限位按欧拉逐轴钳制；接近 ±90° 时用分支滞回保持连续。
-
-## 路线图
-
-2.0 计划把「查看 / 微调」延伸为完整出片流程：时间线关键帧与相机轨编辑、确定性物理烘焙、
-离屏渲染与序列帧 / FFmpeg 输出、WAV 音频对轴，以及无 GL 的批处理 CLI。详见
-[docs/ROADMAP_2.0.md](docs/ROADMAP_2.0.md)（分支 `PmxStudio2.0`）。
+- Agent API 只监听回环地址且没有鉴权，默认端口 8422；同一时间只应有一个进程占用该端口。
+- 非 Windows 平台缺少 CP932 → UTF-8 转换表，VMD / PMX 中的日文名称按原始字节保留，可能无法与模型中已转成 UTF-8 的名称匹配；Agent API 会把非法 UTF-8 字节替换为 U+FFFD 后再输出。
 
 ## 许可
 
