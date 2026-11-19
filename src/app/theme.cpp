@@ -57,8 +57,6 @@ fs::path path_from_utf8(const std::string& text) { return fs::path(utf8_to_wide(
 std::string path_to_utf8(const fs::path& path) { return wide_to_utf8(path.wstring()); }
 #else
 fs::path path_from_utf8(const std::string& text) { return fs::path(text); }
-
-std::string path_to_utf8(const fs::path& path) { return path.string(); }
 #endif
 
 #ifdef _WIN32
@@ -216,7 +214,7 @@ void apply_light_palette(ImGuiStyle& style) {
     ImVec4* c = style.Colors;
     const ImVec4 accent(0.13f, 0.42f, 0.70f, 1.0f);
     c[ImGuiCol_Text] = ImVec4(0.11f, 0.13f, 0.17f, 1.00f);
-    c[ImGuiCol_TextDisabled] = ImVec4(0.45f, 0.49f, 0.55f, 1.00f);
+    c[ImGuiCol_TextDisabled] = ImVec4(0.36f, 0.40f, 0.46f, 1.00f);
     c[ImGuiCol_WindowBg] = ImVec4(0.945f, 0.957f, 0.973f, 0.98f);
     c[ImGuiCol_ChildBg] = ImVec4(0.972f, 0.979f, 0.988f, 0.92f);
     c[ImGuiCol_PopupBg] = ImVec4(1.00f, 1.00f, 1.00f, 0.98f);

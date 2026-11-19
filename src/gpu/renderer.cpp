@@ -764,16 +764,20 @@ void SceneRenderer::build_light_gizmo(const RenderSettings& settings, float aspe
     const float cy = 0.86f - ry * 1.9f;
 
     // 光照色参与罗盘颜色，强度越低越暗，能直接看出当前灯光的色温与亮度。
+    // 背景偏亮时改用深色描线，否则白底上的白色罗盘几乎不可见。
+    const Vec3 bg = effective_background(settings);
+    const float bg_lum = 0.2126f * bg.x + 0.7152f * bg.y + 0.0722f * bg.z;
+    const float ink = bg_lum > 0.5f ? 0.22f : 1.0f;
     const Vec3 tint = settings.light_color;
     const float bright = clampf(settings.light_intensity, 0.0f, 2.0f) * 0.5f + 0.5f;
-    auto tone = [&tint, bright](float base, float alpha) {
-        return Vec4{clampf(tint.x * base * bright, 0.0f, 1.0f),
-                    clampf(tint.y * base * bright, 0.0f, 1.0f),
-                    clampf(tint.z * base * bright, 0.0f, 1.0f), alpha};
+    auto tone = [&tint, bright, ink](float base, float alpha) {
+        return Vec4{clampf(tint.x * base * bright * ink, 0.0f, 1.0f),
+                    clampf(tint.y * base * bright * ink, 0.0f, 1.0f),
+                    clampf(tint.z * base * bright * ink, 0.0f, 1.0f), alpha};
     };
     const Vec4 sun_color = tone(1.0f, 0.95f);
     const Vec4 ray_color = tone(0.82f, 0.75f);
-    const Vec4 arrow_color{1.0f, 0.96f, 0.86f, 0.85f};
+    const Vec4 arrow_color{0.95f * ink, 0.92f * ink, 0.82f * ink, 0.85f};
 
     auto push = [this, cx, cy](float px, float py, Vec4 c) {
         light_verts_.insert(light_verts_.end(), {cx + px, cy + py, 0.0f, c.x, c.y, c.z, c.w});

@@ -225,6 +225,11 @@ void Viewer::settle_physics() {
 
 pmx::Selection Viewer::pick_at(float sx, float sy, int fb_w, int fb_h, int kinds) {
     if (!pose) return pmx::Selection{};
+    // 已隐藏的叠加层不参与拾取，否则不可见的刚体/关节会抢走骨骼的双击。
+    if (!show_bones) kinds &= ~pmx::PICK_BONE;
+    if (!show_rigid) kinds &= ~pmx::PICK_RIGID;
+    if (!show_joints) kinds &= ~pmx::PICK_JOINT;
+    if (kinds == 0) return pmx::Selection{};
     return renderer.pick(model, *pose, physics_ptr, camera.view(),
                          camera.projection(static_cast<float>(fb_w) /
                                            static_cast<float>(std::max(1, fb_h))),
@@ -234,6 +239,10 @@ pmx::Selection Viewer::pick_at(float sx, float sy, int fb_w, int fb_h, int kinds
 std::vector<pmx::Selection> Viewer::pick_candidates_at(float sx, float sy, int fb_w, int fb_h,
                                                        int kinds) {
     if (!pose) return {};
+    if (!show_bones) kinds &= ~pmx::PICK_BONE;
+    if (!show_rigid) kinds &= ~pmx::PICK_RIGID;
+    if (!show_joints) kinds &= ~pmx::PICK_JOINT;
+    if (kinds == 0) return {};
     return renderer.pick_candidates(
         model, *pose, physics_ptr, camera.view(),
         camera.projection(static_cast<float>(fb_w) / static_cast<float>(std::max(1, fb_h))), fb_w,
@@ -855,7 +864,7 @@ void Viewer::draw_ui() {
     // ------------------------------------------------------------ 底部状态栏
     char stats[256];
     std::snprintf(stats, sizeof stats,
-                  "FPS %.1f · 顶点 %zu · 面 %zu · 骨骼 %zu · 刚体 %zu · 关节 %zu · 相机 %.1f",
+                  "FPS %.1f · 顶点 %zu · 三角面 %zu · 骨骼 %zu · 刚体 %zu · 关节 %zu · 视距 %.1f",
                   fps, model.vertices.size(), model.n_faces(), model.bones.size(),
                   model.rigid.size(), model.joints.size(), camera.distance);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
