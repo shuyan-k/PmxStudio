@@ -184,7 +184,8 @@ struct Joint {
 struct SoftBodyAnchor {
     int rigid = -1;
     int vertex = 0;
-    std::uint8_t near = 0;
+    // 字段名不用 near：windef.h 把它定义成空宏，MSVC 下会破坏声明。
+    std::uint8_t near_flag = 0;
 };
 
 struct SoftBody {

@@ -20,9 +20,6 @@
 #ifdef _WIN32
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
-// windef.h 把 near/far 定义成空宏，会和 PMX 的 SoftBodyAnchor::near 等字段名冲突。
-#undef near
-#undef far
 #endif
 
 #include <algorithm>

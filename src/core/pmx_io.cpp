@@ -742,7 +742,7 @@ Model load_pmx(const std::string& path) {
                 SoftBodyAnchor a;
                 a.rigid = r.sindex(m.rsz);
                 a.vertex = static_cast<int>(r.uindex(m.vsz));
-                a.near = r.u8();
+                a.near_flag = r.u8();
                 s.anchors.push_back(a);
             }
             int npin = r.count("柔体固定点数", m.vsz);
@@ -1022,7 +1022,7 @@ void save_pmx(Model& model, const std::string& path) {
             for (const SoftBodyAnchor& a : s.anchors) {
                 w.sindex(a.rigid, rsz);
                 w.uindex(static_cast<std::uint32_t>(a.vertex), vsz);
-                w.u8(a.near);
+                w.u8(a.near_flag);
             }
             w.i32(static_cast<int>(s.pins.size()));
             for (int vid : s.pins) w.uindex(static_cast<std::uint32_t>(vid), vsz);
