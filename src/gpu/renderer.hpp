@@ -42,6 +42,15 @@ struct RenderSettings {
     // 卡通明暗分界的过渡宽度（0.01 为硬边，0.45 为完全渐变）。
     float toon_edge = 0.12f;
     Vec3 background{0.13f, 0.14f, 0.16f};
+    // 背景亮度倍率：<1 向黑压缩，>1 向白插值（与 python 分支一致的提亮方式）。
+    float bg_brightness = 1.0f;
+    // 模型亮度倍率：乘在材质漫反射上，只影响显示与渲染输出。
+    float model_brightness = 1.0f;
+    // 地面网格配色，由主题或用户自定义提供。
+    Vec3 grid_minor{0.30f, 0.31f, 0.34f};
+    Vec3 grid_major{0.42f, 0.43f, 0.47f};
+    Vec3 grid_axis_x{0.75f, 0.45f, 0.45f};
+    Vec3 grid_axis_z{0.45f, 0.55f, 0.80f};
     // 方向光：light_dir 指向光源（与 shader 的 N·L 一致）。
     Vec3 light_dir{0.35f, 0.72f, 0.45f};
     Vec3 light_color{1.0f, 1.0f, 1.0f};
@@ -67,6 +76,9 @@ struct Selection {
     Kind kind = NONE;
     int index = -1;
 };
+
+// 按背景亮度换算离屏清屏色：<1 向黑压缩，>1 向白插值。
+Vec3 effective_background(const RenderSettings& settings);
 
 // 拾取范围：视口按下时只认骨骼（避免误抓刚体），双击才包含全部叠加层。
 enum PickKind {
@@ -169,6 +181,11 @@ private:
     GLuint grid_vao_ = 0;
     GLuint grid_vbo_ = 0;
     GLuint grid_vertex_count_ = 0;
+    // 最近一次构建网格时使用的颜色：主题 / 自定义颜色变化时重建 VBO。
+    Vec3 grid_minor_{0.30f, 0.31f, 0.34f};
+    Vec3 grid_major_{0.42f, 0.43f, 0.47f};
+    Vec3 grid_axis_x_{0.75f, 0.45f, 0.45f};
+    Vec3 grid_axis_z_{0.45f, 0.55f, 0.80f};
     // MMD 内置 toon01..toon10 的程序化替代：竖直灰度渐变，低编号硬边、高编号柔和。
     GLuint toon_ramps_[10] = {};
     // 半透明材质的距离排序：面区间包围中心（静止坐标）+ 最大权重骨骼锚点。
@@ -215,7 +232,8 @@ private:
                        float max_px, int kinds, std::vector<PickHit>& out) const;
 
     void build_templates();
-    void build_grid();
+    void build_grid(const RenderSettings& settings);
+    void ensure_grid(const RenderSettings& settings);
     void build_toon_ramps();
     void rebuild_bone_overlay(const Model& model, Pose& pose, const RenderSettings& settings,
                               const Selection& selection);

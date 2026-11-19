@@ -31,7 +31,8 @@ PMX（MikuMikuDance 模型格式）查看、编辑与出片工具的原生 C++ �
 - **脚本与 CLI**：`pmxstudio-cli` 无窗口批处理，执行 JSON 脚本（批量改名 / 改刚体参数），与 Agent API 共用 [json.hpp](src/core/json.hpp) 解析器。
 - **形态**：顶点 / UV / 材质 / 骨骼 / 组 / 翻转 / 刚体偏移，滑杆预览。
 - **物理**：Bullet 刚体、6DOF 弹簧关节与柔体（`btSoftBody`），固定 1/120 步进、每帧最多 10 个子步，可边演算边摆姿。
-- **编辑**：编辑模式十个检查器面板（信息 / 骨骼 / 表示枠 / 顶点 / 材质 / 面 / 形态 / 物理 / 柔体 / 设置），结构增删与索引重映射，撤销 / 重做，主题与偏好持久化；退出时有未保存修改会先弹确认框。
+- **编辑**：编辑模式十一个检查器面板（信息 / 骨骼 / 表示枠 / 顶点 / 材质 / 面 / 形态 / 物理 / 柔体 / 灯光 / 设置），结构增删与索引重映射，撤销 / 重做，主题与偏好持久化；退出时有未保存修改会先弹确认框。
+- **环境与亮度**：背景色、背景亮度、模型亮度与地面网格颜色可调；背景和网格默认跟随亮 / 暗主题（亮色主题使用浅底深线），灯光页可调光源方向、颜色、强度与环境色。
 - **名称对照**：骨骼 / 形态 / 材质 / 表示枠 / 刚体 / 关节 / 柔体 / 模型名按内置词表把日文或英文原名称译成中文，列表里原文位置不变、中文贴右对齐，详情以「中文：…」列出，搜索框同时匹配原文、英文名与中文。
 
 ## 快速开始
@@ -186,7 +187,7 @@ client.close()
 | `scene.mode` | `preview` | 切换编辑 / 预览模式 |
 | `scene.camera` | `target?` `distance?` `yaw?` `pitch?` `fov?` `ortho?` `ortho_scale?` `near?` `far?` `view?` | 读 / 写自由相机；`view` 切换相机视角 |
 | `scene.camera_fit` | — | 按模型包围盒适配视图 |
-| `scene.settings` | 见下表 | 读 / 写显示与物理参数，返回修改后的完整快照 |
+| `scene.settings` | 见下表 | 读 / 写显示、环境与物理参数，返回修改后的完整快照 |
 | `scene.select` | `kind`，`index` 或 `name` | `kind` 取 `bone` / `material` / `morph` / `rigid` / `joint` / `soft` / `frame` / `none` |
 | `scene.render` | `path`，`width?` `height?` `samples?` `overlays?` `frame?` | 同步离屏渲染当前帧并写 PNG；默认不画骨骼 / 刚体 / 网格等辅助层 |
 | `scene.undo` / `scene.redo` | — | 撤销 / 重做并返回新的场景状态 |
@@ -195,9 +196,9 @@ client.close()
 
 | 类型 | 键 |
 | --- | --- |
-| 布尔 | `show_mesh` `show_bones` `show_rigid` `show_joints` `use_gpu` `wireframe` `grid` `outline` `preview_alpha` `show_light` `camera_gizmo` `ground` `physics_enabled` |
-| 数值 | `bone_alpha` `rigid_alpha` `joint_alpha` `toon` `rim` `toon_edge` `light_intensity` `gravity` `iterations` |
-| 三维向量 | `background` `light_dir` `light_color` `ambient_color` |
+| 布尔 | `show_mesh` `show_bones` `show_rigid` `show_joints` `use_gpu` `wireframe` `grid` `outline` `preview_alpha` `show_light` `camera_gizmo` `ground` `physics_enabled` `bg_follow_theme` `grid_follow_theme` |
+| 数值 | `bone_alpha` `rigid_alpha` `joint_alpha` `toon` `rim` `toon_edge` `light_intensity` `bg_brightness` `model_brightness` `gravity` `iterations` |
+| 三维向量 | `background` `light_dir` `light_color` `ambient_color` `grid_minor` `grid_major` `grid_axis_x` `grid_axis_z` |
 
 #### 动作、骨骼、形态、材质
 
@@ -361,9 +362,10 @@ copy build-demo\Release\demo.dll plugins\
 - **形态**：顶点 / UV / 材质 / 骨骼 / 组 / 翻转 / 刚体偏移编辑，类型切换，滑杆预览（不写入文件）。
 - **物理**：刚体（形状 / 质量 / 摩擦 / 衰减 / 组 / 碰撞掩码）与关节（6DOF 限制 / 弹簧）编辑。
 - **柔体**：PMX 2.1 柔体参数、锚点与固定点编辑。
-- **设置**：叠加层不透明度、重力 / 迭代 / 地面、配置文件路径、快捷键。显示开关、物理开关与深浅主题统一在顶部「视图」菜单。
+- **灯光**：光源方向、颜色与强度、环境色、光源 gizmo；编辑与预览模式都可调，只影响视图和渲染输出，不写入 PMX。
+- **设置**：背景色 / 背景亮度 / 模型亮度、地面网格颜色、叠加层不透明度、重力 / 迭代 / 地面、配置文件路径、快捷键。显示开关、物理开关与深浅主题统一在顶部「视图」菜单。
 
-预览模式只有八个控制标签：
+预览模式只保留控制类标签：
 
 - **检索**：按名称 / 中文 / 英文名快速查找骨骼、刚体、关节（`Ctrl+F` 直达并聚焦搜索框，回车选中第一项），点行即选中；选中骨骼后可在视口中左键拖动位移、右键拖动旋转，选中的隐藏对象会临时显示并高亮。
 - **动作**：VMD 导入 / 清除、播放 / 暂停 / 循环 / 变速、帧滑杆与匹配统计（未匹配轨道逐条列出）。播放中手动拖动骨骼只取消该骨骼的动作，其余骨骼继续受动作驱动。
@@ -373,6 +375,7 @@ copy build-demo\Release\demo.dll plugins\
 - **输出**：分辨率 / 超采样 / 帧范围 / CRF 设置，离屏渲染 PNG 序列并调用 ffmpeg 编码视频；音频载入、波形、偏移校准与导出合轨。
 - **物理**：物理演算开关、重置 / 清速度、重力 / 迭代 / 地面。编辑模式下物理不参与求值，刚体与关节的字段编辑见上。
 - **形态**：形态滑杆，只影响当前预览姿态，不写入文件。
+- **灯光**：与编辑模式相同，可调光源方向、颜色、强度与环境色。
 - **设置**：同编辑模式的设置面板，另含帧 / 物理 / IK / 蒙皮 / UI 的性能计时。
 
 ## 目录结构
@@ -602,7 +605,7 @@ PmxEditor 把「改数据」和「试姿态」拆成三块独立屏幕，而不�
 
 ### 偏好持久化
 
-主题、显示开关、叠加层不透明度、重力 / 迭代 / 地面等写入 `%APPDATA%/PmxStudioCpp/settings.ini`（UTF-8 key=value）。启动时先读偏好再加载模型，`last_model` 只在没有命令行参数时生效；退出时保存。
+主题、背景色 / 背景亮度 / 模型亮度、地面网格颜色、显示开关、叠加层不透明度、重力 / 迭代 / 地面等写入 `%APPDATA%/PmxStudioCpp/settings.ini`（UTF-8 key=value）。背景与网格默认跟随主题，只有手动改色后才写入独立颜色键；启动时先读偏好再加载模型，`last_model` 只在没有命令行参数时生效；退出时保存。
 
 ### 分辨率与 DPI 适配
 

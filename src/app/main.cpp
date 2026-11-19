@@ -826,11 +826,13 @@ void Viewer::draw_ui() {
                 if (ImGui::MenuItem("深色", nullptr, !light) && light) {
                     theme = "dark";
                     pmxtheme::apply_theme(theme);
+                    pmxtheme::apply_scene_theme(*this);
                     pmxtheme::save_settings(*this);
                 }
                 if (ImGui::MenuItem("亮色", nullptr, light) && !light) {
                     theme = "light";
                     pmxtheme::apply_theme(theme);
+                    pmxtheme::apply_scene_theme(*this);
                     pmxtheme::save_settings(*this);
                 }
                 ImGui::EndMenu();
@@ -998,7 +1000,7 @@ void Viewer::draw_ui() {
             }
         };
         if (preview_mode) {
-            // 预览模式只保留控制类标签：检索、动作、时间线、物理开关、形态、设置。
+            // 预览模式只保留控制类标签：检索、动作、时间线、相机、烘焙、输出、物理、形态、灯光、设置。
             tab("检索", &panel_preview_search);
             tab("动作", &panel_motion);
             if (pmx::modules().timeline) tab("时间线", &panel_timeline);
@@ -1020,6 +1022,7 @@ void Viewer::draw_ui() {
             tab("形态", &panel_morph);
             tab("物理", &panel_physics);
             tab("柔体", &panel_soft);
+            tab("灯光", &panel_light);
             tab("设置", &panel_settings);
         }
         ImGui::EndTabBar();
@@ -1125,6 +1128,12 @@ void Viewer::draw_scene(int fb_w, int fb_h) {
     settings.rim = rim;
     settings.toon_edge = toon_edge;
     settings.background = {bg[0], bg[1], bg[2]};
+    settings.bg_brightness = bg_brightness;
+    settings.model_brightness = model_brightness;
+    settings.grid_minor = {grid_minor[0], grid_minor[1], grid_minor[2]};
+    settings.grid_major = {grid_major[0], grid_major[1], grid_major[2]};
+    settings.grid_axis_x = {grid_axis_x[0], grid_axis_x[1], grid_axis_x[2]};
+    settings.grid_axis_z = {grid_axis_z[0], grid_axis_z[1], grid_axis_z[2]};
     settings.light_dir = {light[0], light[1], light[2]};
     settings.light_color = {light_color[0], light_color[1], light_color[2]};
     settings.light_intensity = light_intensity;
@@ -1151,7 +1160,8 @@ void Viewer::draw_scene(int fb_w, int fb_h) {
     }
 
     if (!pose) {
-        glClearColor(bg[0], bg[1], bg[2], 1.0f);
+        const pmx::Vec3 clear = pmx::effective_background(settings);
+        glClearColor(clear.x, clear.y, clear.z, 1.0f);
         glClear(glc::GL_COLOR_BUFFER_BIT | glc::GL_DEPTH_BUFFER_BIT);
         return;
     }
@@ -1734,6 +1744,8 @@ static int run_viewer(const std::vector<std::string>& args) {
     // 留下旧的像素尺寸，反而把控件挤坏，这里禁用。
     ImGui::GetIO().IniFilename = nullptr;
     pmxtheme::apply_theme(viewer.theme);
+    // 视口底色与地面网格跟随主题；用户自定义过的不覆盖。
+    pmxtheme::apply_scene_theme(viewer);
     // 默认字体不含中日韩字形，按平台候选列表加载一款系统字体（ImGui 1.92 按需加载字形）。
     {
         static const char* kFonts[] = {

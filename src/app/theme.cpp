@@ -331,6 +331,42 @@ const ImVec4& pmxtheme::success() { return g_colors.success; }
 const ImVec4& pmxtheme::warning() { return g_colors.warning; }
 const ImVec4& pmxtheme::danger() { return g_colors.danger; }
 
+pmxtheme::SceneColors pmxtheme::scene_colors(const std::string& name) {
+    if (name == "light") {
+        // 与 python 分支的亮色视口一致：浅灰底 + 深一档的网格线，
+        // 保证浅色背景下网格仍然看得见。
+        return SceneColors{
+            {0.913f, 0.929f, 0.953f},
+            {0.25f, 0.26f, 0.27f},
+            {0.21f, 0.22f, 0.24f},
+            {0.55f, 0.24f, 0.26f},
+            {0.24f, 0.33f, 0.48f},
+        };
+    }
+    return SceneColors{
+        {0.13f, 0.14f, 0.16f},
+        {0.30f, 0.31f, 0.34f},
+        {0.42f, 0.43f, 0.47f},
+        {0.75f, 0.45f, 0.45f},
+        {0.45f, 0.55f, 0.80f},
+    };
+}
+
+void pmxtheme::apply_scene_theme(Viewer& v) {
+    const SceneColors colors = scene_colors(v.theme);
+    if (!v.bg_custom) {
+        for (int i = 0; i < 3; ++i) v.bg[i] = colors.background[i];
+    }
+    if (!v.grid_custom) {
+        for (int i = 0; i < 3; ++i) {
+            v.grid_minor[i] = colors.grid_minor[i];
+            v.grid_major[i] = colors.grid_major[i];
+            v.grid_axis_x[i] = colors.grid_axis_x[i];
+            v.grid_axis_z[i] = colors.grid_axis_z[i];
+        }
+    }
+}
+
 std::string pmxtheme::settings_path() {
 #ifdef _WIN32
     const std::wstring appdata = appdata_dir();
@@ -353,6 +389,9 @@ bool pmxtheme::load_settings(Viewer& v, std::string* err) {
         if (err) *err = "无法读取配置文件：" + text;
         return false;
     }
+    // 重新载入时以文件内容为准：没有颜色键就回到跟随主题。
+    v.bg_custom = false;
+    v.grid_custom = false;
 
     std::string line;
     while (std::getline(in, line)) {
@@ -368,6 +407,21 @@ bool pmxtheme::load_settings(Viewer& v, std::string* err) {
         int integer = 0;
         if (key == "theme") {
             if (!value.empty()) v.theme = value;
+        } else if (key == "bg" && parse_vec3(value, v.bg)) {
+            // 只有配置文件里出现过背景色，才视为用户自定义；否则跟随主题。
+            v.bg_custom = true;
+        } else if (key == "grid_minor" && parse_vec3(value, v.grid_minor)) {
+            v.grid_custom = true;
+        } else if (key == "grid_major" && parse_vec3(value, v.grid_major)) {
+            v.grid_custom = true;
+        } else if (key == "grid_axis_x" && parse_vec3(value, v.grid_axis_x)) {
+            v.grid_custom = true;
+        } else if (key == "grid_axis_z" && parse_vec3(value, v.grid_axis_z)) {
+            v.grid_custom = true;
+        } else if (key == "bg_brightness" && parse_float(value, number)) {
+            v.bg_brightness = std::clamp(number, 0.2f, 3.0f);
+        } else if (key == "model_brightness" && parse_float(value, number)) {
+            v.model_brightness = std::clamp(number, 0.2f, 2.2f);
         } else if (key == "show_mesh" && parse_bool(value, flag)) {
             v.show_mesh = flag;
         } else if (key == "show_bones" && parse_bool(value, flag)) {
@@ -441,6 +495,21 @@ void pmxtheme::save_settings(const Viewer& v) {
         if (!out) return;
 
         out << "theme=" << v.theme << '\n';
+        out << "bg_brightness=" << v.bg_brightness << '\n';
+        out << "model_brightness=" << v.model_brightness << '\n';
+        // 自定义颜色才落盘；跟随主题时由 scene_colors 按主题生成。
+        if (v.bg_custom)
+            out << "bg=" << v.bg[0] << ',' << v.bg[1] << ',' << v.bg[2] << '\n';
+        if (v.grid_custom) {
+            out << "grid_minor=" << v.grid_minor[0] << ',' << v.grid_minor[1] << ','
+                << v.grid_minor[2] << '\n';
+            out << "grid_major=" << v.grid_major[0] << ',' << v.grid_major[1] << ','
+                << v.grid_major[2] << '\n';
+            out << "grid_axis_x=" << v.grid_axis_x[0] << ',' << v.grid_axis_x[1] << ','
+                << v.grid_axis_x[2] << '\n';
+            out << "grid_axis_z=" << v.grid_axis_z[0] << ',' << v.grid_axis_z[1] << ','
+                << v.grid_axis_z[2] << '\n';
+        }
         out << "show_mesh=" << as_bit(v.show_mesh) << '\n';
         out << "show_bones=" << as_bit(v.show_bones) << '\n';
         out << "show_rigid=" << as_bit(v.show_rigid) << '\n';

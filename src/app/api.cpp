@@ -31,6 +31,7 @@
 #endif
 
 #include "app/export.hpp"
+#include "app/theme.hpp"
 #include "app/timeline.hpp"
 #include "app/viewer.hpp"
 #include "core/fs.hpp"
@@ -414,6 +415,18 @@ JsonValue settings_json(const Viewer& viewer) {
     pmx::json_set(out, "rim", pmx::json_number(viewer.rim));
     pmx::json_set(out, "toon_edge", pmx::json_number(viewer.toon_edge));
     pmx::json_set(out, "background", vec3_json({viewer.bg[0], viewer.bg[1], viewer.bg[2]}));
+    pmx::json_set(out, "bg_brightness", pmx::json_number(viewer.bg_brightness));
+    pmx::json_set(out, "model_brightness", pmx::json_number(viewer.model_brightness));
+    pmx::json_set(out, "bg_follow_theme", pmx::json_bool(!viewer.bg_custom));
+    pmx::json_set(out, "grid_follow_theme", pmx::json_bool(!viewer.grid_custom));
+    pmx::json_set(out, "grid_minor",
+                  vec3_json({viewer.grid_minor[0], viewer.grid_minor[1], viewer.grid_minor[2]}));
+    pmx::json_set(out, "grid_major",
+                  vec3_json({viewer.grid_major[0], viewer.grid_major[1], viewer.grid_major[2]}));
+    pmx::json_set(out, "grid_axis_x", vec3_json({viewer.grid_axis_x[0], viewer.grid_axis_x[1],
+                                                 viewer.grid_axis_x[2]}));
+    pmx::json_set(out, "grid_axis_z", vec3_json({viewer.grid_axis_z[0], viewer.grid_axis_z[1],
+                                                 viewer.grid_axis_z[2]}));
     pmx::json_set(out, "light_dir",
                   vec3_json({viewer.light[0], viewer.light[1], viewer.light[2]}));
     pmx::json_set(out, "light_color",
@@ -454,6 +467,12 @@ void apply_settings(Viewer& viewer, const JsonValue& params) {
     if (has(params, "toon_edge")) viewer.toon_edge = optional_float(params, "toon_edge", viewer.toon_edge);
     if (has(params, "light_intensity"))
         viewer.light_intensity = optional_float(params, "light_intensity", viewer.light_intensity);
+    if (has(params, "bg_brightness"))
+        viewer.bg_brightness =
+            std::clamp(optional_float(params, "bg_brightness", viewer.bg_brightness), 0.2f, 3.0f);
+    if (has(params, "model_brightness"))
+        viewer.model_brightness = std::clamp(
+            optional_float(params, "model_brightness", viewer.model_brightness), 0.2f, 2.2f);
 
     auto set_vec3 = [&](const char* key, float* target) {
         if (const JsonValue* node = params.find(key)) {
@@ -463,10 +482,53 @@ void apply_settings(Viewer& viewer, const JsonValue& params) {
             target[2] = value.z;
         }
     };
-    set_vec3("background", viewer.bg);
+    if (const JsonValue* node = params.find("background")) {
+        const pmx::Vec3 value = read_vec3(*node, "background");
+        viewer.bg[0] = value.x;
+        viewer.bg[1] = value.y;
+        viewer.bg[2] = value.z;
+        viewer.bg_custom = true;
+    }
+    if (const JsonValue* node = params.find("grid_minor")) {
+        const pmx::Vec3 value = read_vec3(*node, "grid_minor");
+        viewer.grid_minor[0] = value.x;
+        viewer.grid_minor[1] = value.y;
+        viewer.grid_minor[2] = value.z;
+        viewer.grid_custom = true;
+    }
+    if (const JsonValue* node = params.find("grid_major")) {
+        const pmx::Vec3 value = read_vec3(*node, "grid_major");
+        viewer.grid_major[0] = value.x;
+        viewer.grid_major[1] = value.y;
+        viewer.grid_major[2] = value.z;
+        viewer.grid_custom = true;
+    }
+    if (const JsonValue* node = params.find("grid_axis_x")) {
+        const pmx::Vec3 value = read_vec3(*node, "grid_axis_x");
+        viewer.grid_axis_x[0] = value.x;
+        viewer.grid_axis_x[1] = value.y;
+        viewer.grid_axis_x[2] = value.z;
+        viewer.grid_custom = true;
+    }
+    if (const JsonValue* node = params.find("grid_axis_z")) {
+        const pmx::Vec3 value = read_vec3(*node, "grid_axis_z");
+        viewer.grid_axis_z[0] = value.x;
+        viewer.grid_axis_z[1] = value.y;
+        viewer.grid_axis_z[2] = value.z;
+        viewer.grid_custom = true;
+    }
     set_vec3("light_dir", viewer.light);
     set_vec3("light_color", viewer.light_color);
     set_vec3("ambient_color", viewer.ambient);
+
+    if (has(params, "bg_follow_theme")) {
+        viewer.bg_custom = !optional_bool(params, "bg_follow_theme", !viewer.bg_custom);
+        if (!viewer.bg_custom) pmxtheme::apply_scene_theme(viewer);
+    }
+    if (has(params, "grid_follow_theme")) {
+        viewer.grid_custom = !optional_bool(params, "grid_follow_theme", !viewer.grid_custom);
+        if (!viewer.grid_custom) pmxtheme::apply_scene_theme(viewer);
+    }
 
     bool physics_changed = false;
     if (has(params, "ground")) {
@@ -498,6 +560,13 @@ pmx::RenderSettings render_settings(const Viewer& viewer, bool overlays) {
     settings.use_gpu_skinning = viewer.use_gpu;
     settings.wireframe = viewer.wireframe;
     settings.grid = overlays && viewer.grid;
+    settings.background = {viewer.bg[0], viewer.bg[1], viewer.bg[2]};
+    settings.bg_brightness = viewer.bg_brightness;
+    settings.model_brightness = viewer.model_brightness;
+    settings.grid_minor = {viewer.grid_minor[0], viewer.grid_minor[1], viewer.grid_minor[2]};
+    settings.grid_major = {viewer.grid_major[0], viewer.grid_major[1], viewer.grid_major[2]};
+    settings.grid_axis_x = {viewer.grid_axis_x[0], viewer.grid_axis_x[1], viewer.grid_axis_x[2]};
+    settings.grid_axis_z = {viewer.grid_axis_z[0], viewer.grid_axis_z[1], viewer.grid_axis_z[2]};
     settings.outline = viewer.outline;
     settings.preview_alpha = viewer.preview_alpha;
     settings.bone_alpha = viewer.bone_alpha;

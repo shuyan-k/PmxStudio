@@ -81,6 +81,15 @@ struct Viewer {
     // 卡通明暗分界的过渡宽度：越小越接近 MMD 的硬边。
     float toon_edge = 0.12f;
     float bg[3] = {0.13f, 0.14f, 0.16f};
+    // 背景 / 地面网格颜色默认跟随主题；用户改过颜色后不再被主题覆盖。
+    bool bg_custom = false;
+    float bg_brightness = 1.0f;
+    float model_brightness = 1.0f;
+    float grid_minor[3] = {0.30f, 0.31f, 0.34f};
+    float grid_major[3] = {0.42f, 0.43f, 0.47f};
+    float grid_axis_x[3] = {0.75f, 0.45f, 0.45f};
+    float grid_axis_z[3] = {0.45f, 0.55f, 0.80f};
+    bool grid_custom = false;
     // 灯光：light 指向光源（MMD 照明面板的 X/Y/Z），颜色 × 强度作用在直射光上，
     // ambient 乘在暗部（MMD 的「環境色」）。都只影响视图与渲染输出。
     float light[3] = {0.35f, 0.72f, 0.45f};

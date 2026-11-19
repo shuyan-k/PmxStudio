@@ -1,4 +1,4 @@
-// 设置页：叠加层透明度、物理参数与快捷键。显示开关与主题统一放在「视图」菜单。
+// 设置页：环境亮度与颜色、叠加层透明度、物理参数与快捷键。显示开关与主题统一放在「视图」菜单。
 #include "app/panels.hpp"
 
 #include <string>
@@ -13,6 +13,50 @@ void panel_settings(Viewer& v) {
     ImGui::BeginChild("##settings_scroll", ImVec2(0, 0));
 
     ImGui::TextDisabled("显示开关、物理开关与界面主题见顶部「视图」菜单。");
+
+    // ------------------------------------------------------------ 环境与亮度
+    ImGui::SeparatorText("环境与亮度");
+    {
+        bool bg_follow = !v.bg_custom;
+        if (ImGui::Checkbox("背景色跟随主题##bg_follow", &bg_follow)) {
+            v.bg_custom = !bg_follow;
+            if (bg_follow) pmxtheme::apply_scene_theme(v);
+        }
+        ImGui::SetItemTooltip("关闭后使用自定义背景色，切换深色 / 亮色主题不再覆盖");
+        ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+        if (ImGui::ColorEdit3("背景色##bg_color", v.bg, ImGuiColorEditFlags_Float))
+            v.bg_custom = true;
+        ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+        ImGui::SliderFloat("背景亮度##bg_brightness", &v.bg_brightness, 0.2f, 3.0f, "%.2f×");
+        ImGui::SetItemTooltip("压暗或提亮视口底色；提亮时向白色过渡，亮色主题更容易看清暗部");
+        ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+        ImGui::SliderFloat("模型亮度##model_brightness", &v.model_brightness, 0.2f, 2.2f,
+                           "%.2f×");
+        ImGui::SetItemTooltip("乘在材质漫反射上，只影响显示与渲染输出，不写入 PMX");
+
+        bool grid_follow = !v.grid_custom;
+        if (ImGui::Checkbox("地面网格跟随主题##grid_follow", &grid_follow)) {
+            v.grid_custom = !grid_follow;
+            if (grid_follow) pmxtheme::apply_scene_theme(v);
+        }
+        if (ImGui::TreeNode("地面网格颜色##grid_colors")) {
+            ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+            if (ImGui::ColorEdit3("次线##grid_minor", v.grid_minor, ImGuiColorEditFlags_Float))
+                v.grid_custom = true;
+            ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+            if (ImGui::ColorEdit3("主线##grid_major", v.grid_major, ImGuiColorEditFlags_Float))
+                v.grid_custom = true;
+            ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+            if (ImGui::ColorEdit3("X 轴##grid_axis_x", v.grid_axis_x,
+                                  ImGuiColorEditFlags_Float))
+                v.grid_custom = true;
+            ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+            if (ImGui::ColorEdit3("Z 轴##grid_axis_z", v.grid_axis_z,
+                                  ImGuiColorEditFlags_Float))
+                v.grid_custom = true;
+            ImGui::TreePop();
+        }
+    }
 
     // ------------------------------------------------------------ 叠加层透明度
     ImGui::SeparatorText("叠加层不透明度");
@@ -52,6 +96,7 @@ void panel_settings(Viewer& v) {
         std::string err;
         const bool loaded = pmxtheme::load_settings(v, &err);
         pmxtheme::apply_theme(v.theme);
+        pmxtheme::apply_scene_theme(v);
         if (!err.empty()) v.error = err;
         else if (loaded) v.status = "设置已重新载入";
     }

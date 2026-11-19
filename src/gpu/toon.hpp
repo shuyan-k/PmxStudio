@@ -46,6 +46,7 @@ uniform vec3 uSpecular;
 uniform float uSpecCoef;
 uniform float uToon;
 uniform float uToonEdge;
+uniform float uModelBrightness;
 uniform float uRim;
 uniform vec3 uLightDir;
 uniform vec3 uLightColor;
@@ -56,7 +57,7 @@ uniform mat4 uView;
 void main() {
     vec4 tex = uUseTex == 1 ? texture(uTex, vUV) : vec4(1.0);
     if (tex.a < 0.02) discard;
-    vec4 base = vec4(tex.rgb * uDiffuse.rgb, tex.a * uDiffuse.a);
+    vec4 base = vec4(tex.rgb * uDiffuse.rgb * uModelBrightness, tex.a * uDiffuse.a);
     vec3 n = normalize(vN);
     if (!gl_FrontFacing) n = -n;
     vec3 light = normalize(uLightDir);

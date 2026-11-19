@@ -514,7 +514,7 @@ bool SceneRenderer::init(std::string* error) {
     gpu_check_enabled_ = std::getenv("PMX_GPU_CHECK") != nullptr;
     build_templates();
     build_toon_ramps();
-    build_grid();
+    build_grid(RenderSettings{});
     ready_ = true;
     return true;
 }
@@ -575,27 +575,43 @@ void SceneRenderer::build_templates() {
     glBindVertexArray(0);
 }
 
-void SceneRenderer::build_grid() {
+void SceneRenderer::build_grid(const RenderSettings& settings) {
+    if (grid_vbo_) {
+        glDeleteBuffers(1, &grid_vbo_);
+        grid_vbo_ = 0;
+    }
+    if (grid_vao_) {
+        glDeleteVertexArrays(1, &grid_vao_);
+        grid_vao_ = 0;
+    }
     std::vector<float> verts;
     const float extent = 40.0f;
     const float step = 1.0f;
-    const Vec4 minor(0.30f, 0.31f, 0.34f, 1.0f);
-    const Vec4 major(0.42f, 0.43f, 0.47f, 1.0f);
+    const Vec4 minor(settings.grid_minor.x, settings.grid_minor.y, settings.grid_minor.z, 1.0f);
+    const Vec4 major(settings.grid_major.x, settings.grid_major.y, settings.grid_major.z, 1.0f);
+    const Vec4 axis_x(settings.grid_axis_x.x, settings.grid_axis_x.y, settings.grid_axis_x.z,
+                      1.0f);
+    const Vec4 axis_z(settings.grid_axis_z.x, settings.grid_axis_z.y, settings.grid_axis_z.z,
+                      1.0f);
     auto push = [&verts](Vec3 p, Vec4 c) {
         verts.insert(verts.end(), {p.x, p.y, p.z, c.x, c.y, c.z, c.w});
     };
     for (float x = -extent; x <= extent + 1e-4f; x += step) {
         const bool axis = std::fabs(x) < 1e-4f;
         const Vec4 c = (std::fabs(std::fmod(x, 5.0f)) < 1e-4f) ? major : minor;
-        push({x, 0.0f, -extent}, axis ? Vec4(0.75f, 0.45f, 0.45f, 1.0f) : c);
-        push({x, 0.0f, extent}, axis ? Vec4(0.75f, 0.45f, 0.45f, 1.0f) : c);
+        push({x, 0.0f, -extent}, axis ? axis_z : c);
+        push({x, 0.0f, extent}, axis ? axis_z : c);
     }
     for (float z = -extent; z <= extent + 1e-4f; z += step) {
         const bool axis = std::fabs(z) < 1e-4f;
         const Vec4 c = (std::fabs(std::fmod(z, 5.0f)) < 1e-4f) ? major : minor;
-        push({-extent, 0.0f, z}, axis ? Vec4(0.45f, 0.55f, 0.80f, 1.0f) : c);
-        push({extent, 0.0f, z}, axis ? Vec4(0.45f, 0.55f, 0.80f, 1.0f) : c);
+        push({-extent, 0.0f, z}, axis ? axis_x : c);
+        push({extent, 0.0f, z}, axis ? axis_x : c);
     }
+    grid_minor_ = settings.grid_minor;
+    grid_major_ = settings.grid_major;
+    grid_axis_x_ = settings.grid_axis_x;
+    grid_axis_z_ = settings.grid_axis_z;
     grid_vertex_count_ = static_cast<GLuint>(verts.size() / 7);
     glGenVertexArrays(1, &grid_vao_);
     glBindVertexArray(grid_vao_);
@@ -610,6 +626,33 @@ void SceneRenderer::build_grid() {
     glVertexAttribPointer(1, 4, glc::GL_FLOAT, glc::GL_FALSE, stride,
                           reinterpret_cast<const void*>(3 * sizeof(float)));
     glBindVertexArray(0);
+}
+
+void SceneRenderer::ensure_grid(const RenderSettings& settings) {
+    if (grid_minor_.x != settings.grid_minor.x || grid_minor_.y != settings.grid_minor.y ||
+        grid_minor_.z != settings.grid_minor.z || grid_major_.x != settings.grid_major.x ||
+        grid_major_.y != settings.grid_major.y || grid_major_.z != settings.grid_major.z ||
+        grid_axis_x_.x != settings.grid_axis_x.x || grid_axis_x_.y != settings.grid_axis_x.y ||
+        grid_axis_x_.z != settings.grid_axis_x.z || grid_axis_z_.x != settings.grid_axis_z.x ||
+        grid_axis_z_.y != settings.grid_axis_z.y || grid_axis_z_.z != settings.grid_axis_z.z) {
+        build_grid(settings);
+    }
+}
+
+Vec3 effective_background(const RenderSettings& settings) {
+    const float b = clampf(settings.bg_brightness, 0.0f, 3.0f);
+    auto channel = [b](float c) {
+        if (b >= 1.0f) {
+            // 提亮走「向白插值」，避免直接乘导致高光溢出成纯白后丢失层次。
+            const float k = std::min(1.0f, (b - 1.0f) * 0.6f);
+            c += (1.0f - c) * k;
+        } else {
+            c *= b;
+        }
+        return clampf(c, 0.0f, 1.0f);
+    };
+    return {channel(settings.background.x), channel(settings.background.y),
+            channel(settings.background.z)};
 }
 
 void SceneRenderer::build_camera_gizmo(const RenderSettings& settings, Vec3 view_eye) {
@@ -1428,7 +1471,8 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
     const Vec3 eye{-eye_neg.x, -eye_neg.y, -eye_neg.z};
 
     glViewport(0, 0, width, height);
-    glClearColor(settings.background.x, settings.background.y, settings.background.z, 1.0f);
+    const Vec3 clear_color = effective_background(settings);
+    glClearColor(clear_color.x, clear_color.y, clear_color.z, 1.0f);
     glClear(glc::GL_COLOR_BUFFER_BIT | glc::GL_DEPTH_BUFFER_BIT | glc::GL_STENCIL_BUFFER_BIT);
     glEnable(glc::GL_DEPTH_TEST);
     // 用 LEQUAL 而不是 LESS：PMX 里存在大量完全共面的重复材质（如 袖口/袖口+、
@@ -1444,6 +1488,7 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
 
     // ---- 网格地面
     if (settings.grid) {
+        ensure_grid(settings);
         line_program_.use();
         line_program_.set_mat4("uMVP", vp);
         line_program_.set1f("uAlpha", 1.0f);
@@ -1482,6 +1527,7 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
         mesh_program_.set3f("uEye", eye);
         mesh_program_.set1f("uRim", settings.rim);
         mesh_program_.set1f("uToonEdge", settings.toon_edge);
+        mesh_program_.set1f("uModelBrightness", settings.model_brightness);
         // 全场统一的方向光参数，逐材质只改材质自身的漫反射/贴图等。
         mesh_program_.set3f("uLightColor", settings.light_color);
         mesh_program_.set1f("uLightIntensity", settings.light_intensity);
