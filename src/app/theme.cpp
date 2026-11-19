@@ -15,9 +15,6 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-// windef.h 把 near/far 定义成空宏，会破坏 PMX 结构体里的同名字段。
-#undef near
-#undef far
 #endif
 
 #include <imgui.h>

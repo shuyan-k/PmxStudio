@@ -317,7 +317,7 @@ void draw_soft_detail(Viewer& v, int index) {
         std::snprintf(head, sizeof head, "%02d · ", i);
         char body[256];
         std::snprintf(body, sizeof body, "刚体 %d「%s」· 顶点 %d%s", anchor.rigid,
-                      name.c_str(), anchor.vertex, anchor.near ? " · 近" : "");
+                      name.c_str(), anchor.vertex, anchor.near_flag ? " · 近" : "");
         std::string text = head;
         text += body;
         text += "##soft_anchor" + std::to_string(i);

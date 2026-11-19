@@ -400,7 +400,7 @@ int compact_vertices(pmx::Model& m) {
                                ? remap[static_cast<std::size_t>(a.vertex)]
                                : -1;
             if (nv < 0) continue;
-            anchors.push_back({a.rigid, nv, a.near});
+            anchors.push_back({a.rigid, nv, a.near_flag});
         }
         s.anchors = std::move(anchors);
         std::vector<int> pins;
@@ -631,7 +631,7 @@ int remove_rigid(pmx::Model& m, int index) {
         for (const auto& a : s.anchors) {
             const int rid = remap_index(a.rigid, index);
             if (rid < 0) continue;
-            anchors.push_back({rid, a.vertex, a.near});
+            anchors.push_back({rid, a.vertex, a.near_flag});
         }
         s.anchors = std::move(anchors);
     }
