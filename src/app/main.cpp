@@ -35,9 +35,11 @@
 #include <string>
 #include <vector>
 
+#include "app/api.hpp"
 #include "app/camera.hpp"
 #include "app/modules.hpp"
 #include "app/panels.hpp"
+#include "app/plugin.hpp"
 #include "app/profiler.hpp"
 #include "app/theme.hpp"
 #include "app/timeline.hpp"
@@ -1653,12 +1655,77 @@ static int run_viewer(const std::vector<std::string>& args) {
     }
 
     std::string initial = args.size() > 1 ? args[1] : viewer.model_path;
+    // 命令行选项：--api 启动 Agent API，--api-port N（或 --api-port=N）指定端口，
+    // --no-plugins 跳过插件加载；其余非选项参数视为模型路径。
+    bool api_enabled = false;
+    bool plugins_enabled = true;
+    int api_port = 8422;
+    std::string initial_arg;
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--api") {
+            api_enabled = true;
+        } else if (arg == "--api-port") {
+            if (i + 1 < args.size()) api_port = std::atoi(args[++i].c_str());
+        } else if (arg.rfind("--api-port=", 0) == 0) {
+            api_port = std::atoi(arg.c_str() + std::strlen("--api-port="));
+        } else if (arg == "--no-plugins") {
+            plugins_enabled = false;
+        } else if (arg.size() > 1 && arg[0] == '-') {
+            // 未知选项忽略。
+        } else if (initial_arg.empty()) {
+            initial_arg = arg;
+        }
+    }
+    if (!initial_arg.empty()) initial = initial_arg;
     if (initial.empty()) initial = "tests/test_model.pmx";
     if (!viewer.load_model(initial, &err)) {
         viewer.model_path = initial;
         viewer.error = err;
     }
     viewer.fps_time = glfwGetTime();
+
+    // 插件宿主：命令通过 host->invoke 调用与 Agent API 相同的内置命令。
+    PluginManager plugins;
+    plugins.set_host_invoke(
+        [&viewer](const std::string& method, const std::string& params_json,
+                  std::string& result_json, std::string& error) {
+            pmx::JsonValue params;
+            try {
+                params = params_json.empty() ? pmx::json_object() : pmx::parse_json(params_json);
+            } catch (const pmx::ParseError& parse_error) {
+                error = std::string("参数 JSON 解析失败：") + parse_error.message;
+                return false;
+            }
+            pmx::JsonValue result;
+            if (!api_execute(viewer, method, params, result, error)) return false;
+            result_json = pmx::json_dump(result);
+            return true;
+        });
+    if (plugins_enabled) {
+        const int count = plugins.load_all();
+        if (count > 0)
+            std::fprintf(stderr, "PmxStudio: 已加载 %d 个插件\n", count);
+    }
+
+    // Agent API：本地 JSON-RPC，插件命令也通过同一张表分发。
+    ApiServer api;
+    api.set_plugin_hooks(
+        [&plugins]() { return plugins.describe(); },
+        [&plugins](const std::string& method, const std::string& params_json,
+                   std::string& result_json, std::string& error) {
+            return plugins.invoke(method, params_json, result_json, error);
+        });
+    if (api_enabled) {
+        std::string api_error;
+        if (!api.start(api_port, &api_error)) {
+            viewer.error = api_error;
+            std::fprintf(stderr, "PmxStudio: 启动 Agent API 失败：%s\n", api_error.c_str());
+        } else {
+            std::printf("PmxStudio Agent API: 127.0.0.1:%d\n", api.port());
+            std::fflush(stdout);
+        }
+    }
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -1700,6 +1767,9 @@ static int run_viewer(const std::vector<std::string>& args) {
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+
+        // Agent API：在帧首执行外部请求，保证本帧绘制使用最新状态。
+        api.poll(viewer);
 
 #ifdef _WIN32
         // 首帧或切换主题时把原生标题栏同步成深色 / 浅色。
@@ -1819,6 +1889,8 @@ static int run_viewer(const std::vector<std::string>& args) {
     }
 
     pmxtheme::save_settings(viewer);
+    api.stop();
+    plugins.unload_all();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

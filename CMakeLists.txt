@@ -63,6 +63,7 @@ set(PMX_CORE_SOURCES
     src/core/vmd.cpp
     src/core/utf8_args.cpp
     src/core/name_zh.cpp
+    src/core/json.cpp
 )
 
 if(PMX_MODULE_TIMELINE)
@@ -124,7 +125,17 @@ endif()  # PMX_BUILD_APP
 if(PMX_BUILD_APP)
     file(GLOB PMX_APP_SOURCES CONFIGURE_DEPENDS src/app/*.cpp src/app/panels/*.cpp)
     add_executable(pmxstudio ${PMX_APP_SOURCES})
+    target_include_directories(pmxstudio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(pmxstudio PRIVATE
+        PMXSTUDIO_VERSION="${PROJECT_VERSION}")
     target_link_libraries(pmxstudio PRIVATE pmx_gpu imgui glfw)
+    if(WIN32)
+        # Agent API 的本地 socket（ws2_32）。
+        target_link_libraries(pmxstudio PRIVATE ws2_32)
+    else()
+        # 插件动态库加载（dlopen）。
+        target_link_libraries(pmxstudio PRIVATE ${CMAKE_DL_LIBS})
+    endif()
     # 模块宏：modules.hpp 用它决定默认开关；关闭的模块连 UI 标签都不出现。
     foreach(mod TIMELINE BAKE RENDER_OUT AUDIO SCRIPT)
         if(PMX_MODULE_${mod})
