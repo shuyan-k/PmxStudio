@@ -487,6 +487,8 @@ void Viewer::rebuild_runtime(bool geometry, bool skeleton, bool physics_rebuild)
     std::vector<float> old_values = morph_values;
 
     pose = std::make_unique<pmx::Pose>(model);
+    // 骨骼可能改名 / 增删：重新分类。数量不变时保留手动指定的分类。
+    refresh_bone_categories();
     if (old.base_rot.size() == static_cast<std::size_t>(pose->n)) {
         pose->base_rot = old.base_rot;
         pose->base_trans = old.base_trans;
@@ -544,6 +546,45 @@ void Viewer::rebuild_runtime(bool geometry, bool skeleton, bool physics_rebuild)
         if (physics_enabled) physics.reset(*pose, &morph_weights, true);
     }
 #endif
+}
+
+void Viewer::refresh_bone_categories(bool reset_manual) {
+    const std::size_t n = model.bones.size();
+    // 骨骼数量变化意味着索引已不可靠，手动覆盖只能丢弃。
+    if (reset_manual || bone_category.size() != n || bone_category_manual.size() != n) {
+        bone_category.assign(n, pmx::BoneCategory::Other);
+        bone_category_manual.assign(n, 0);
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+        if (reset_manual || !bone_category_manual[i]) {
+            const pmx::Bone& b = model.bones[i];
+            bone_category[i] = pmx::classify_bone(b.name, b.name_en);
+        }
+    }
+    refresh_bone_visibility();
+}
+
+void Viewer::refresh_bone_visibility() {
+    bone_visible.resize(bone_category.size());
+    for (std::size_t i = 0; i < bone_category.size(); ++i) {
+        const int c = static_cast<int>(bone_category[i]);
+        bone_visible[i] = (c >= 0 && c < pmx::kBoneCategoryCount && bone_category_visible[c])
+                              ? 1
+                              : 0;
+    }
+}
+
+void Viewer::set_bone_category(int bone, pmx::BoneCategory category, bool manual) {
+    if (bone < 0 || bone >= static_cast<int>(bone_category.size())) return;
+    bone_category[static_cast<std::size_t>(bone)] = category;
+    bone_category_manual[static_cast<std::size_t>(bone)] = manual ? 1 : 0;
+    refresh_bone_visibility();
+}
+
+void Viewer::set_bone_category_visible(int category, bool visible) {
+    if (category < 0 || category >= pmx::kBoneCategoryCount) return;
+    bone_category_visible[static_cast<std::size_t>(category)] = visible;
+    refresh_bone_visibility();
 }
 
 void Viewer::select(SelKind kind, int index) {

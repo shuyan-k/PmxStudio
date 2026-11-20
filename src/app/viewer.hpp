@@ -1,6 +1,7 @@
 // 查看器共享状态：模型、姿态、渲染、撤销栈与检查器选择。
 #pragma once
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <string>
@@ -12,6 +13,7 @@
 #include "app/export_job.hpp"
 #include "app/timeline.hpp"
 #include "core/audio.hpp"
+#include "core/bone_category.hpp"
 #include "core/morph.hpp"
 #include "core/pmx.hpp"
 #include "core/pose.hpp"
@@ -109,6 +111,16 @@ struct Viewer {
     bool show_bones = true;
     bool show_rigid = true;
     bool show_joints = true;
+
+    // 骨骼显示分类：每根骨骼的分类、手动覆盖标记，以及各分类的显示开关。
+    std::vector<pmx::BoneCategory> bone_category;
+    std::vector<std::uint8_t> bone_category_manual;
+    std::vector<std::uint8_t> bone_visible;  // 1 显示 / 0 隐藏，供渲染与拾取
+    std::array<bool, pmx::kBoneCategoryCount> bone_category_visible = [] {
+        std::array<bool, pmx::kBoneCategoryCount> flags{};
+        flags.fill(true);
+        return flags;
+    }();
     bool use_gpu = true;
     bool wireframe = false;
     bool grid = true;
@@ -394,6 +406,11 @@ struct Viewer {
 
     // 结构变化后重建 Pose / 网格 / 物理；尽量保留姿态、形态、相机与选择。
     void rebuild_runtime(bool geometry, bool skeleton, bool physics_rebuild);
+    // 重新按名称分类骨骼（骨骼数量变化时丢弃手动覆盖），并刷新可见性掩码。
+    void refresh_bone_categories(bool reset_manual = false);
+    void refresh_bone_visibility();
+    void set_bone_category(int bone, pmx::BoneCategory category, bool manual);
+    void set_bone_category_visible(int category, bool visible);
     void refresh_after_edit(const std::string& kind);
     void select(SelKind kind, int index);
     void clamp_selection();

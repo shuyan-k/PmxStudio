@@ -37,6 +37,8 @@ struct RenderSettings {
     bool show_bones = true;
     bool show_rigid = true;
     bool show_joints = true;
+    // 按骨骼显示分类算出的可见性（1 显示 / 0 隐藏）。为空表示全部显示。
+    std::vector<std::uint8_t> bone_visible;
     // 叠加层整体隐藏时是否仍绘制当前选中的那一个（双击选中后临时显示并高亮）。
     bool focus_selection = false;
     bool use_gpu_skinning = true;
@@ -163,14 +165,17 @@ public:
     // 屏幕空间拾取：返回命中的骨骼/刚体/关节索引。
     Selection pick(const Model& model, Pose& pose, Physics* physics, const Mat4& view,
                    const Mat4& proj, int width, int height, float sx, float sy,
-                   float max_px, int kinds = PICK_ALL) const;
+                   float max_px, int kinds = PICK_ALL,
+                   const std::vector<std::uint8_t>* bone_visible = nullptr) const;
 
     // 落点附近所有可拾取对象，按屏幕距离升序（距离接近时骨骼在前）。
     // 双击时若不止一个，用它弹出候选列表让用户指定。
     std::vector<Selection> pick_candidates(const Model& model, Pose& pose, Physics* physics,
                                            const Mat4& view, const Mat4& proj, int width,
                                            int height, float sx, float sy, float max_px,
-                                           int kinds = PICK_ALL) const;
+                                           int kinds = PICK_ALL,
+                                           const std::vector<std::uint8_t>* bone_visible =
+                                               nullptr) const;
 
     int gpu_skin_dispatch_count = 0;
     std::string error;
@@ -333,7 +338,9 @@ private:
     // 收集 max_px 范围内的全部命中，供 pick / pick_candidates 共用。
     void collect_picks(const Model& model, Pose& pose, Physics* physics, const Mat4& view,
                        const Mat4& proj, int width, int height, float sx, float sy,
-                       float max_px, int kinds, std::vector<PickHit>& out) const;
+                       float max_px, int kinds,
+                       const std::vector<std::uint8_t>* bone_visible,
+                       std::vector<PickHit>& out) const;
 
     void build_templates();
     void build_grid(const RenderSettings& settings);

@@ -1863,8 +1863,12 @@ void SceneRenderer::rebuild_bone_overlay(const Model& model, Pose& pose,
     };
     for (int i = 0; i < nb; ++i) {
         const bool selected = selection.kind == Selection::BONE && selection.index == i;
-        // 骨骼整体隐藏时，只把双击选中的那一根画出来（高亮），取消选择后恢复隐藏。
-        if (!settings.show_bones && !(settings.focus_selection && selected)) continue;
+        // 骨骼整体隐藏或所属分类关闭时，只把双击选中的那一根画出来（高亮）。
+        const bool category_on =
+            i >= static_cast<int>(settings.bone_visible.size()) || settings.bone_visible[i] != 0;
+        if ((!settings.show_bones || !category_on) &&
+            !(settings.focus_selection && selected))
+            continue;
         const Bone& b = model.bones[static_cast<std::size_t>(i)];
         if (!(b.flags & BF_VISIBLE) || !(b.flags & BF_ENABLED)) continue;
         const Mat4& M = W[static_cast<std::size_t>(i)];
@@ -2479,6 +2483,7 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
 void SceneRenderer::collect_picks(const Model& model, Pose& pose, Physics* physics,
                                   const Mat4& view, const Mat4& proj, int width, int height,
                                   float sx, float sy, float max_px, int kinds,
+                                  const std::vector<std::uint8_t>* bone_visible,
                                   std::vector<PickHit>& out) const {
     out.clear();
     if (model_.vao == 0) return;
@@ -2490,6 +2495,10 @@ void SceneRenderer::collect_picks(const Model& model, Pose& pose, Physics* physi
     for (int i = 0; (kinds & PICK_BONE) && i < nb; ++i) {
         const Bone& b = model.bones[static_cast<std::size_t>(i)];
         if (!(b.flags & BF_VISIBLE)) continue;
+        // 分类被隐藏的骨骼不参与拾取，避免点到看不见的骨骼。
+        if (bone_visible && i < static_cast<int>(bone_visible->size()) &&
+            (*bone_visible)[static_cast<std::size_t>(i)] == 0)
+            continue;
         const Mat4& M = W[static_cast<std::size_t>(i)];
         const Vec3 head(M.at(0, 3), M.at(1, 3), M.at(2, 3));
         Vec3 tail;
@@ -2534,9 +2543,11 @@ void SceneRenderer::collect_picks(const Model& model, Pose& pose, Physics* physi
 
 Selection SceneRenderer::pick(const Model& model, Pose& pose, Physics* physics, const Mat4& view,
                               const Mat4& proj, int width, int height, float sx, float sy,
-                              float max_px, int kinds) const {
+                              float max_px, int kinds,
+                              const std::vector<std::uint8_t>* bone_visible) const {
     std::vector<PickHit> hits;
-    collect_picks(model, pose, physics, view, proj, width, height, sx, sy, max_px, kinds, hits);
+    collect_picks(model, pose, physics, view, proj, width, height, sx, sy, max_px, kinds,
+                  bone_visible, hits);
     // 刚体/关节画在最上层，全量拾取时优先命中它们（与 Python 版双击语义一致）。
     Selection overlay_hit;
     Selection bone_hit;
@@ -2561,9 +2572,11 @@ std::vector<Selection> SceneRenderer::pick_candidates(const Model& model, Pose& 
                                                       Physics* physics, const Mat4& view,
                                                       const Mat4& proj, int width, int height,
                                                       float sx, float sy, float max_px,
-                                                      int kinds) const {
+                                                      int kinds,
+                                                      const std::vector<std::uint8_t>* bone_visible) const {
     std::vector<PickHit> hits;
-    collect_picks(model, pose, physics, view, proj, width, height, sx, sy, max_px, kinds, hits);
+    collect_picks(model, pose, physics, view, proj, width, height, sx, sy, max_px, kinds,
+                  bone_visible, hits);
     std::sort(hits.begin(), hits.end(), [](const PickHit& a, const PickHit& b) {
         // 距离相差超过 1 像素才按远近；近似重合时骨骼在前（Kind 枚举 BONE=1）。
         if (std::fabs(a.dist - b.dist) > 1.0f) return a.dist < b.dist;

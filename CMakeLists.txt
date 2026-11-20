@@ -64,6 +64,7 @@ set(PMX_CORE_SOURCES
     src/core/vmd.cpp
     src/core/utf8_args.cpp
     src/core/name_zh.cpp
+    src/core/bone_category.cpp
     src/core/json.cpp
 )
 

@@ -678,6 +678,7 @@ pmx::RenderSettings render_settings(const Viewer& viewer, bool overlays) {
     settings.show_bones = overlays && viewer.show_bones;
     settings.show_rigid = overlays && viewer.show_rigid;
     settings.show_joints = overlays && viewer.show_joints;
+    settings.bone_visible = viewer.bone_visible;
     settings.focus_selection = overlays && viewer.focus_overlay;
     settings.use_gpu_skinning = viewer.use_gpu;
     settings.wireframe = viewer.wireframe;
@@ -1128,6 +1129,46 @@ JsonValue cmd_bone_list(const Viewer& viewer, const JsonValue& params) {
         pmx::json_set(item, "parent", pmx::json_number(bone.parent));
         pmx::json_set(item, "pos", vec3_json(bone.pos));
         pmx::json_set(item, "flags", pmx::json_number(bone.flags));
+        const pmx::BoneCategory category =
+            i < viewer.bone_category.size() ? viewer.bone_category[i] : pmx::BoneCategory::Other;
+        set_string(item, "category", pmx::bone_category_id(category));
+        set_string(item, "category_name", pmx::bone_category_name(category));
+        pmx::json_set(item, "visible",
+                      pmx::json_bool(i < viewer.bone_visible.size() && viewer.bone_visible[i] != 0));
+        pmx::json_push(out, std::move(item));
+    }
+    return out;
+}
+
+JsonValue cmd_bone_categories(Viewer& viewer, const JsonValue& params) {
+    if (!viewer.pose) throw ApiError{"尚未加载模型"};
+    if (viewer.bone_category.size() != viewer.model.bones.size()) viewer.refresh_bone_categories();
+
+    if (const JsonValue* node = params.find("category")) {
+        if (!node->is_string()) throw ApiError{"参数 \"category\" 必须是字符串"};
+        int index = -1;
+        for (int c = 0; c < pmx::kBoneCategoryCount; ++c)
+            if (node->string == pmx::bone_category_id(static_cast<pmx::BoneCategory>(c))) index = c;
+        if (index < 0) throw ApiError{"未知骨骼分类 \"" + node->string + "\""};
+        const JsonValue* visible = params.find("visible");
+        if (!visible || !visible->is_bool())
+            throw ApiError{"设置骨骼分类需要布尔参数 \"visible\""};
+        viewer.set_bone_category_visible(index, visible->boolean);
+    }
+
+    int counts[pmx::kBoneCategoryCount] = {};
+    for (const pmx::BoneCategory category : viewer.bone_category) {
+        const int c = static_cast<int>(category);
+        if (c >= 0 && c < pmx::kBoneCategoryCount) ++counts[c];
+    }
+    JsonValue out = pmx::json_array();
+    for (int c = 0; c < pmx::kBoneCategoryCount; ++c) {
+        JsonValue item = pmx::json_object();
+        set_string(item, "id", pmx::bone_category_id(static_cast<pmx::BoneCategory>(c)));
+        set_string(item, "name", pmx::bone_category_name(static_cast<pmx::BoneCategory>(c)));
+        pmx::json_set(item, "count", pmx::json_number(counts[c]));
+        pmx::json_set(item, "visible",
+                      pmx::json_bool(viewer.bone_category_visible[static_cast<std::size_t>(c)]));
         pmx::json_push(out, std::move(item));
     }
     return out;
@@ -1454,6 +1495,7 @@ JsonValue dispatch(Viewer& viewer, const std::string& method, const JsonValue& p
     }
 
     if (method == "bone.list") return cmd_bone_list(viewer, params);
+    if (method == "bone.categories") return cmd_bone_categories(viewer, params);
     if (method == "bone.pose") return cmd_bone_pose(viewer, params);
 
     if (method == "morph.list") return cmd_morph_list(viewer);

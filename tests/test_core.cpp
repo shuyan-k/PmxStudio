@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "core/bone_category.hpp"
 #include "core/flesh.hpp"
 #include "core/fs.hpp"
 #include "core/morph.hpp"
@@ -236,6 +237,28 @@ void test_bone_morph(const std::filesystem::path& dir) {
 }
 
 // ---------------------------------------------------------------- 蒙皮
+void test_bone_category() {
+    using pmx::BoneCategory;
+    check(pmx::classify_bone("左後髪1-1", "") == BoneCategory::Hair, "頭髮分類");
+    check(pmx::classify_bone("刘海", "") == BoneCategory::Hair, "刘海分類");
+    check(pmx::classify_bone("左手袖1-1", "") == BoneCategory::Clothing, "袖子優先於四肢");
+    check(pmx::classify_bone("右耳環1-1", "") == BoneCategory::Accessory, "耳環優先於體幹");
+    check(pmx::classify_bone("左裙星鏈1-3", "") == BoneCategory::Clothing, "裙鏈分類");
+    check(pmx::classify_bone("领带1-1", "") == BoneCategory::Clothing, "领带分類");
+    check(pmx::classify_bone("右手捩1", "") == BoneCategory::Limbs, "手腕捩骨分類");
+    check(pmx::classify_bone("DownTeeth", "") == BoneCategory::Torso, "英文大小写分類");
+    check(pmx::classify_bone("左足ＩＫ", "") == BoneCategory::Limbs, "足 IK 分類");
+    check(pmx::classify_bone("左ひざ", "") == BoneCategory::Limbs, "膝分類");
+    check(pmx::classify_bone("上半身2", "") == BoneCategory::Torso, "上半身分類");
+    check(pmx::classify_bone("右目先", "") == BoneCategory::Torso, "眼部歸體幹");
+    check(pmx::classify_bone("left elbow", "") == BoneCategory::Limbs, "英文肘分類");
+    check(pmx::classify_bone("armor", "") == BoneCategory::Clothing, "armor 不誤判四肢");
+    check(pmx::classify_bone("weapon_R", "") == BoneCategory::Prop, "英文武器分類");
+    check(pmx::classify_bone("", "sword") == BoneCategory::Prop, "僅英文名也能分類");
+    check(pmx::classify_bone("unknown_thing", "") == BoneCategory::Other, "未知分類");
+    check(pmx::classify_bone("", "") == BoneCategory::Other, "空名分類");
+}
+
 void test_skinning(const pmx::Model& model) {
     std::printf("[3] CPU 参考蒙皮\n");
     pmx::SkinDeformer deform(model);
@@ -729,6 +752,7 @@ int main(int argc, char** argv) {
         test_roundtrip(path, out);
         test_pose(model);
         test_bone_morph(out.parent_path());
+        test_bone_category();
         test_skinning(model);
         test_flesh();
         test_physics(model);
