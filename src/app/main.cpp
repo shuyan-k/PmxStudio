@@ -149,6 +149,13 @@ bool Viewer::load_model(const std::string& path, std::string* err) {
         return false;
     }
     pose = std::make_unique<pmx::Pose>(model);
+    // 换模型后附件的锚点骨骼索引失效，直接清掉。
+    accessory = pmx::Model{};
+    render_model = pmx::Model{};
+    accessory_path.clear();
+    accessory_loaded = false;
+    accessory_bone = -1;
+    accessory_vertex_base = 0;
     morph_values.assign(model.morphs.size(), 0.0f);
     morph_weights.clear();
     morph_dirty = true;
@@ -192,8 +199,11 @@ void Viewer::apply_morphs() {
     const std::unordered_map<int, float> resolved =
         pmx::resolve_morph_weights(model, morph_weights);
     pmx::MorphWeights weights(resolved.begin(), resolved.end());
-    pmx::VertexMorphResult vm = pmx::apply_vertex_morphs(model, weights);
-    renderer.update_base(model, vm);
+    // 附件也参与形态后的基底同步：主模型的顶点形态不影响追加的附件段，
+    // 但 update_base 需要与渲染模型一致的顶点数量。
+    const pmx::Model& am = active_model();
+    pmx::VertexMorphResult vm = pmx::apply_vertex_morphs(am, weights);
+    renderer.update_base(am, vm);
     if (pose) pose->apply(&weights);
     morph_dirty = false;
 }
@@ -237,7 +247,7 @@ bool Viewer::bake_flesh_frame(int frame, std::string* err) {
     pose->solve_ik();
     pose->world();
     const pmx::RenderSettings fs = flesh_render_settings();
-    if (!renderer.bake_flesh_frame(model, *pose, fs, frame, err)) return false;
+    if (!renderer.bake_flesh_frame(active_model(), *pose, fs, frame, err)) return false;
     return true;
 }
 
@@ -818,6 +828,17 @@ void Viewer::draw_ui() {
         }
         if (ImGui::BeginMenu("文件")) {
             if (ImGui::MenuItem("打开 PMX…", "Ctrl+O")) open_pmx();
+            const bool has_model = pose != nullptr;
+            if (ImGui::MenuItem("导入附件模型…", nullptr, false, has_model)) {
+                const std::string path = pick_open_file(kPmxFilter, L"导入附件 PMX");
+                if (!path.empty()) {
+                    std::string err;
+                    if (load_accessory(path, &err)) error.clear();
+                    else error = err;
+                }
+            }
+            if (ImGui::MenuItem("移除附件", nullptr, false, has_model && accessory_loaded))
+                clear_accessory();
             // 姿态与动作属于预览模式（PmxEditor 的 TransformView），编辑模式不叠加。
             const bool can_pose_file = pose != nullptr && preview_mode;
             if (ImGui::MenuItem("导入 VPD…", nullptr, false, can_pose_file)) import_vpd();
@@ -1059,6 +1080,7 @@ void Viewer::draw_ui() {
                 tab("输出", &panel_output);
             tab("物理", &panel_preview_physics);
             tab("形态", &panel_preview_morph);
+            tab("附件", &panel_accessory);
             tab("灯光", &panel_light);
             if (kFleshEnabled) tab("肉体", &panel_flesh);
             tab("设置", &panel_settings);
@@ -1072,6 +1094,7 @@ void Viewer::draw_ui() {
             tab("形态", &panel_morph);
             tab("物理", &panel_physics);
             tab("柔体", &panel_soft);
+            tab("附件", &panel_accessory);
             tab("灯光", &panel_light);
             if (kFleshEnabled) tab("肉体", &panel_flesh);
             tab("设置", &panel_settings);
@@ -1241,7 +1264,7 @@ void Viewer::draw_scene(int fb_w, int fb_h) {
         return;
     }
     const float aspect = static_cast<float>(fb_w) / static_cast<float>(std::max(1, fb_h));
-    renderer.render(model, *pose, physics_ptr, camera.view(), camera.projection(aspect),
+    renderer.render(active_model(), *pose, physics_ptr, camera.view(), camera.projection(aspect),
                     fb_w, fb_h, settings, selection);
     // GPU 肉体是否可用 / 本帧是否命中，反馈给面板显示。
     flesh_gpu_available = renderer.flesh_gpu_available();

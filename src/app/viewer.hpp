@@ -56,6 +56,32 @@ struct Viewer {
     std::vector<float> morph_values;
     bool morph_dirty = true;
 
+    // ---------------------------------------------------------- 附件模型
+    // 单独加载的 PMX（如头部挂饰）：几何合并进渲染用的 render_model，
+    // 全部顶点 100% 绑定到主模型的一个骨骼上跟随运动；
+    // 不参与编辑、拾取与保存，随主模型重新加载而清空。
+    pmx::Model accessory;
+    pmx::Model render_model;  // 仅在加载附件时使用
+    std::string accessory_path;
+    bool accessory_loaded = false;
+    int accessory_bone = -1;                  // 锚点骨骼（主模型）
+    float accessory_pos[3] = {0.0f, 0.0f, 0.0f};
+    float accessory_rot[3] = {0.0f, 0.0f, 0.0f};  // 欧拉角，角度制
+    float accessory_scale = 1.0f;
+    std::size_t accessory_vertex_base = 0;    // 附件顶点在 render_model 中的起点
+
+    // 渲染器实际使用的模型：有附件时是合并模型，否则就是主模型。
+    const pmx::Model& active_model() const { return accessory_loaded ? render_model : model; }
+    bool load_accessory(const std::string& path, std::string* err);
+    void clear_accessory();
+    // 用主模型 + 变换后的附件重建渲染模型（结构变化时调用，不上传 GPU）。
+    void rebuild_render_model();
+    // 拖动变换时只更新附件段顶点并局部回传，避免整模型重建 / 贴图重载。
+    void update_accessory_transform();
+    // 重建后重新上传，用于加载 / 移除附件、切换锚点骨骼。
+    void apply_accessory_structure();
+    int default_accessory_bone() const;
+
     std::string model_path;
     std::string vpd_path;
     std::string vmd_path;

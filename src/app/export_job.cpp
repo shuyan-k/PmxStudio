@@ -128,8 +128,8 @@ void export_job_tick(Viewer& v) {
 
     const float aspect = static_cast<float>(w) / static_cast<float>(std::max(1, h));
     job.target->bind();
-    v.renderer.render(v.model, *v.pose, nullptr, camera.view(), camera.projection(aspect), w,
-                      h, settings, pmx::Selection{});
+    v.renderer.render(v.active_model(), *v.pose, nullptr, camera.view(), camera.projection(aspect),
+                      w, h, settings, pmx::Selection{});
     const bool read_ok = job.target->read_rgba(w, h, job.rgba, &job.error);
     job.target->unbind();
 

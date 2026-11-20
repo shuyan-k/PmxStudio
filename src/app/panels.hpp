@@ -31,3 +31,5 @@ void panel_camera(Viewer& v);
 void panel_output(Viewer& v);
 // 烘焙：实时物理固化到骨骼轨（panels/bake.cpp）。
 void panel_bake(Viewer& v);
+// 附件：额外加载一个 PMX（如头部挂饰），绑定到主模型骨骼跟随运动。
+void panel_accessory(Viewer& v);

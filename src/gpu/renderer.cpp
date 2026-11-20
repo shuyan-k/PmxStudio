@@ -1351,6 +1351,48 @@ void SceneRenderer::update_base(const Model& model, const VertexMorphResult& mor
     glBindBuffer(glc::GL_SHADER_STORAGE_BUFFER, 0);
 }
 
+void SceneRenderer::update_vertex_range(const Model& model, std::size_t first) {
+    if (model_.vbo == 0) return;
+    const std::size_t nv = model.vertices.size();
+    if (first == 0 || first >= nv) return;
+    if (base_pos_.size() == nv) {
+        std::copy(model.vertices.pos.begin() + static_cast<std::ptrdiff_t>(first),
+                  model.vertices.pos.end(),
+                  base_pos_.begin() + static_cast<std::ptrdiff_t>(first));
+    } else {
+        base_pos_ = model.vertices.pos;
+    }
+    const std::uint64_t next_hash = hash_rest_positions(base_pos_);
+    if (next_hash != base_hash_) {
+        base_hash_ = next_hash;
+        clear_flesh_cache();
+    }
+    glBindBuffer(glc::GL_SHADER_STORAGE_BUFFER, model_.vbo);
+    const GLsizeiptr total =
+        static_cast<GLsizeiptr>(nv * kFloatsPerVertex * sizeof(float));
+    auto* base = static_cast<std::uint8_t*>(
+        glMapBufferRange(glc::GL_SHADER_STORAGE_BUFFER, 0, total,
+                         glc::GL_MAP_WRITE_BIT | glc::GL_MAP_UNSYNCHRONIZED_BIT));
+    if (base) {
+        const auto& pos = model.vertices.pos;
+        const auto& nrm = model.vertices.nrm;
+        for (std::size_t i = first; i < nv; ++i) {
+            float* o = reinterpret_cast<float*>(
+                base + i * kFloatsPerVertex * sizeof(float));
+            o[0] = pos[i].x;
+            o[1] = pos[i].y;
+            o[2] = pos[i].z;
+            if (i < nrm.size()) {
+                o[4] = nrm[i].x;
+                o[5] = nrm[i].y;
+                o[6] = nrm[i].z;
+            }
+        }
+        glUnmapBuffer(glc::GL_SHADER_STORAGE_BUFFER);
+    }
+    glBindBuffer(glc::GL_SHADER_STORAGE_BUFFER, 0);
+}
+
 void SceneRenderer::validate_gpu_skin(const Model& model, Pose& pose) {
     const std::size_t nv = model.vertices.size();
     glBindBuffer(glc::GL_SHADER_STORAGE_BUFFER, model_.out_pos_ssbo);
