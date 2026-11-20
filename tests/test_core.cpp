@@ -589,6 +589,104 @@ void test_flesh() {
     auto rigid_n = m.vertices.nrm;
     solver.apply(rigid_region, rigid_n, region);
     check(max_abs_diff(rigid_region, m.vertices.pos) < 1e-6, "区域硬度 1 时不形变");
+
+    // 默认参数（接触距离 1.2% 身高）在这两块相距 5% 的面上不应产生任何形变。
+    pmx::FleshParams defaults;
+    auto rest = m.vertices.pos;
+    auto rest_n = m.vertices.nrm;
+    solver.apply(rest, rest_n, defaults);
+    check(max_abs_diff(rest, m.vertices.pos) < 1e-6, "默认参数静止姿态无形变");
+
+    // Corner Taper：只应该回收隆起，不应放大位移。
+    pmx::FleshParams bumped = params;
+    bumped.bulge = 1.0f;
+    bumped.taper = 0.0f;
+    bumped.threads = 1;
+    auto open = m.vertices.pos;
+    auto open_n = m.vertices.nrm;
+    solver.apply(open, open_n, bumped);
+    pmx::FleshParams tapered = bumped;
+    tapered.taper = 1.0f;
+    auto closed = m.vertices.pos;
+    auto closed_n = m.vertices.nrm;
+    solver.apply(closed, closed_n, tapered);
+    check(max_abs_diff(open, closed) > 1e-4, "Corner Taper 改变了隆起分布");
+    // 折痕端部的隆起回收后，最大外翻量不应该变大。
+    float max_open = 0.0f;
+    float max_closed = 0.0f;
+    for (std::size_t i = 0; i < m.vertices.pos.size(); ++i) {
+        const pmx::Vec3 d0 = open[i] - m.vertices.pos[i];
+        const pmx::Vec3 d1 = closed[i] - m.vertices.pos[i];
+        max_open = std::max(max_open, d0.z * m.vertices.nrm[i].z);
+        max_closed = std::max(max_closed, d1.z * m.vertices.nrm[i].z);
+    }
+    check(max_closed <= max_open + 1e-5f, "Corner Taper 不会放大外翻隆起");
+
+    // 多线程结果必须与单线程一致（线程局部数组按 max 合并）。
+    auto mt = m.vertices.pos;
+    auto mt_n = m.vertices.nrm;
+    pmx::FleshParams threaded = bumped;
+    threaded.threads = 4;
+    threaded.taper = 0.55f;
+    solver.apply(mt, mt_n, threaded);
+    auto st = m.vertices.pos;
+    auto st_n = m.vertices.nrm;
+    pmx::FleshParams single = threaded;
+    single.threads = 1;
+    solver.apply(st, st_n, single);
+    check(max_abs_diff(mt, st) < 1e-6, "肉体求解多线程结果一致");
+
+    // 外部碰撞体：球心放在两张面之间，靠近球心的顶点被推到球面上。
+    pmx::FleshParams collision = params;
+    collision.dent = 0.0f;
+    collision.bulge = 0.0f;
+    collision.taper = 0.0f;
+    collision.threads = 1;
+    pmx::FleshColliderShape ball;
+    ball.a = {0.5f, 0.5f, 0.025f};
+    ball.radius = 0.15f;
+    auto pushed = m.vertices.pos;
+    auto pushed_n = m.vertices.nrm;
+    solver.apply(pushed, pushed_n, collision, {ball});
+    // 索引 12 是下表面的中心顶点 (0.5, 0.5, 0)。
+    const std::size_t center = static_cast<std::size_t>(2 * grid + 2);
+    check(pushed[center].z < -0.1f, "球碰撞体把顶点推到表面");
+    check(std::fabs(pushed[0].z) < 1e-4f, "远离碰撞体的顶点不受影响");
+
+    // 碰撞体硬度 1：完全不推。
+    pmx::FleshColliderShape hard_ball = ball;
+    hard_ball.firmness = 1.0f;
+    auto held = m.vertices.pos;
+    auto held_n = m.vertices.nrm;
+    solver.apply(held, held_n, collision, {hard_ball});
+    check(max_abs_diff(held, m.vertices.pos) < 1e-6, "碰撞体硬度 1 时不形变");
+
+    // 胶囊碰撞体：轴线经过下表面，靠近轴线的顶点被推开。
+    pmx::FleshColliderShape capsule;
+    capsule.a = {0.25f, 0.0f, 0.025f};
+    capsule.b = {0.75f, 0.0f, 0.025f};
+    capsule.radius = 0.1f;
+    capsule.capsule = true;
+    auto cap = m.vertices.pos;
+    auto cap_n = m.vertices.nrm;
+    solver.apply(cap, cap_n, collision, {capsule});
+    const std::size_t on_axis = static_cast<std::size_t>(2);
+    check(cap[on_axis].z < -1e-3f, "胶囊碰撞体推开轴线附近的顶点");
+    check(std::fabs(cap[static_cast<std::size_t>(grid * grid - 1)].z) < 1e-4f,
+          "胶囊碰撞体不影响远端顶点");
+
+    // Smooth Pops：第一帧记录位移，第二帧只走一半。
+    std::vector<pmx::Vec3> skinned = m.vertices.pos;
+    std::vector<pmx::Vec3> smooth_pos(skinned.size());
+    std::vector<pmx::Vec3> prev;
+    for (std::size_t i = 0; i < skinned.size(); ++i)
+        smooth_pos[i] = skinned[i] + pmx::Vec3{0.0f, 0.0f, 0.2f};
+    pmx::smooth_flesh_pops(skinned, smooth_pos, prev, 0.5f);
+    check(std::fabs(smooth_pos[0].z - 0.2f) < 1e-5f, "Smooth Pops 首帧保留原位移");
+    for (std::size_t i = 0; i < skinned.size(); ++i)
+        smooth_pos[i] = skinned[i] + pmx::Vec3{0.0f, 0.0f, 0.4f};
+    pmx::smooth_flesh_pops(skinned, smooth_pos, prev, 0.5f);
+    check(std::fabs(smooth_pos[0].z - 0.3f) < 1e-5f, "Smooth Pops 第二帧向新位移收敛");
 }
 
 }  // namespace

@@ -37,6 +37,21 @@ constexpr GLuint kBindingPos = 3;
 constexpr GLuint kBindingNrm = 4;
 constexpr GLuint kBindingInstances = 5;
 
+// 静止坐标指纹（FNV-1a）：形态改变时让肉体烘焙缓存失效。
+std::uint64_t hash_rest_positions(const std::vector<Vec3>& pos) {
+    std::uint64_t h = 1469598103934665603ull;
+    for (const Vec3& p : pos) {
+        const float values[3] = {p.x, p.y, p.z};
+        for (float v : values) {
+            std::uint32_t bits = 0;
+            std::memcpy(&bits, &v, sizeof(bits));
+            h ^= bits;
+            h *= 1099511628211ull;
+        }
+    }
+    return h;
+}
+
 // 关闭物理后端时（-DPMX_ENABLE_PHYSICS=OFF）这些调用退化为空实现。
 #ifdef PMX_ENABLE_PHYSICS
 inline bool query_body(const Physics* p, int i, Vec3& pos, Quat& q) {
@@ -1116,7 +1131,9 @@ void SceneRenderer::release_model() {
     texture_by_index_.clear();
     texture_index_ready_.clear();
     base_pos_.clear();
+    base_hash_ = 0;
     flesh_solver_.clear();
+    clear_flesh_cache();
 }
 
 bool SceneRenderer::upload_model(const Model& model, std::string* error) {
@@ -1276,6 +1293,8 @@ bool SceneRenderer::upload_model(const Model& model, std::string* error) {
     // 肉体变形的焊接拓扑与 CPU 蒙皮基准坐标随模型结构重建。
     flesh_solver_.reset(model);
     base_pos_ = model.vertices.pos;
+    base_hash_ = hash_rest_positions(base_pos_);
+    clear_flesh_cache();
     return true;
 }
 
@@ -1288,6 +1307,12 @@ void SceneRenderer::update_base(const Model& model, const VertexMorphResult& mor
         base_pos_.assign(morph.pos->begin(), morph.pos->end());
     } else {
         base_pos_.clear();
+    }
+    const std::uint64_t next_hash = hash_rest_positions(base_pos_);
+    if (next_hash != base_hash_) {
+        // 形态改变了静止坐标：已烘焙的顶点全部失效。
+        base_hash_ = next_hash;
+        clear_flesh_cache();
     }
     if (morph.pos == &model.vertices.pos && morph.uv == &model.vertices.uv) return;
     const int nv = static_cast<int>(model.vertices.size());
@@ -1383,12 +1408,136 @@ void SceneRenderer::upload_cpu_skin(const Model& model, Pose& pose) {
     upload_skinned(pos, nrm);
 }
 
-void SceneRenderer::upload_cpu_skin_flesh(const Model& model, Pose& pose,
-                                          const RenderSettings& settings) {
+namespace {
+
+constexpr std::size_t kFleshCacheLimit = 512ull << 20;  // 512 MB
+
+std::uint64_t hash_bytes(std::uint64_t h, const void* data, std::size_t bytes) {
+    const auto* p = static_cast<const unsigned char*>(data);
+    for (std::size_t i = 0; i < bytes; ++i) {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+std::uint64_t hash_float(std::uint64_t h, float v) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &v, sizeof(bits));
+    return hash_bytes(h, &bits, sizeof(bits));
+}
+
+std::uint64_t hash_vec3(std::uint64_t h, Vec3 v) {
+    h = hash_float(h, v.x);
+    h = hash_float(h, v.y);
+    return hash_float(h, v.z);
+}
+
+// 当前骨骼矩阵与「烘焙帧（或两帧插值）」的最大分量差。
+float matrix_diff(const Mat4& cur, const Mat4& a, const Mat4* b, float t) {
+    float diff = 0.0f;
+    for (int i = 0; i < 16; ++i) {
+        const float ref = b != nullptr ? a.m[i] * (1.0f - t) + b->m[i] * t : a.m[i];
+        diff = std::max(diff, std::fabs(cur.m[i] - ref));
+    }
+    return diff;
+}
+
+}  // namespace
+
+void SceneRenderer::build_flesh_colliders(Pose& pose, const RenderSettings& settings,
+                                          std::vector<FleshColliderShape>& out) const {
+    out.clear();
+    if (settings.flesh_colliders.empty()) return;
+    const std::vector<Mat4>& W = pose.world();
+    out.reserve(settings.flesh_colliders.size());
+    for (const FleshColliderSpec& spec : settings.flesh_colliders) {
+        if (spec.bone < 0 || spec.bone >= pose.n) continue;
+        const Mat4& m = W[static_cast<std::size_t>(spec.bone)];
+        FleshColliderShape shape;
+        shape.a = transform_point(m, spec.offset);
+        shape.capsule = spec.shape == 1;
+        shape.b = shape.capsule
+                      ? transform_point(m, spec.offset + Vec3(0.0f, spec.length, 0.0f))
+                      : shape.a;
+        shape.radius = std::max(0.001f, spec.radius);
+        shape.firmness = std::clamp(spec.firmness, 0.0f, 1.0f);
+        out.push_back(shape);
+    }
+}
+
+std::uint64_t SceneRenderer::flesh_param_key(
+    const RenderSettings& settings, const std::vector<FleshColliderShape>& colliders) const {
+    std::uint64_t h = 1469598103934665603ull;
+    const float values[] = {settings.flesh_range,
+                            settings.flesh_dent,
+                            settings.flesh_bulge,
+                            settings.flesh_width,
+                            settings.flesh_firmness,
+                            settings.flesh_region_firmness,
+                            settings.flesh_taper,
+                            settings.flesh_taper_reach,
+                            settings.flesh_taper_falloff};
+    for (float v : values) h = hash_float(h, v);
+    const int region = settings.flesh_region_bone;
+    h = hash_bytes(h, &region, sizeof(region));
+    for (const FleshColliderShape& c : colliders) {
+        h = hash_vec3(h, c.a);
+        h = hash_vec3(h, c.b);
+        h = hash_float(h, c.radius);
+        h = hash_float(h, c.firmness);
+        const std::uint8_t cap = c.capsule ? 1u : 0u;
+        h = hash_bytes(h, &cap, sizeof(cap));
+    }
+    h = hash_bytes(h, &base_hash_, sizeof(base_hash_));
+    return h;
+}
+
+bool SceneRenderer::upload_baked_flesh(const RenderSettings& settings, Pose& pose,
+                                       std::uint64_t key) {
+    if (!settings.flesh_cache || settings.flesh_frame < 0.0f) return false;
+    const float frame = settings.flesh_frame;
+    const int f0 = static_cast<int>(std::floor(frame));
+    const float frac = frame - static_cast<float>(f0);
+    const auto it0 = flesh_cache_.find(f0);
+    if (it0 == flesh_cache_.end() || it0->second.param_key != key) return false;
+    const FleshBakeFrame& a = it0->second;
+    const FleshBakeFrame* b = nullptr;
+    if (frac > 0.001f) {
+        const auto it1 = flesh_cache_.find(f0 + 1);
+        if (it1 == flesh_cache_.end() || it1->second.param_key != key) return false;
+        b = &it1->second;
+        if (b->pos.size() != a.pos.size() || b->nrm.size() != a.nrm.size()) return false;
+    }
+    const std::vector<Mat4>& W = pose.world();
+    if (W.size() != a.bones.size() || (b != nullptr && b->bones.size() != a.bones.size()))
+        return false;
+    // 手动拖骨骼 / 物理回写会让当前姿态偏离烘焙帧，此时不能复用缓存。
+    for (std::size_t i = 0; i < W.size(); ++i) {
+        if (matrix_diff(W[i], a.bones[i], b != nullptr ? &b->bones[i] : nullptr, frac) > 0.02f)
+            return false;
+    }
+    std::vector<Vec3> pos(a.pos.size());
+    std::vector<Vec3> nrm(a.nrm.size());
+    for (std::size_t i = 0; i < pos.size(); ++i) {
+        pos[i] = b != nullptr ? a.pos[i] * (1.0f - frac) + b->pos[i] * frac : a.pos[i];
+        Vec3 n = b != nullptr ? a.nrm[i] * (1.0f - frac) + b->nrm[i] * frac : a.nrm[i];
+        if (length(n) > 1e-8f) n = normalize(n);
+        nrm[i] = n;
+    }
+    upload_skinned(pos, nrm);
+    ++flesh_cache_hits_;
+    return true;
+}
+
+void SceneRenderer::deform_flesh(const Model& model, Pose& pose,
+                                 const RenderSettings& settings, float frame,
+                                 bool allow_smooth, std::vector<Vec3>& pos,
+                                 std::vector<Vec3>& nrm) {
     SkinDeformer deformer(model);
-    std::vector<Vec3> pos, nrm;
     const auto& base = base_pos_.size() == model.vertices.size() ? base_pos_ : model.vertices.pos;
     deformer.deform(base, model.vertices.nrm, pose.world(), pos, nrm);
+
     FleshParams fp;
     fp.range = settings.flesh_range;
     fp.dent = settings.flesh_dent;
@@ -1397,8 +1546,86 @@ void SceneRenderer::upload_cpu_skin_flesh(const Model& model, Pose& pose,
     fp.firmness = settings.flesh_firmness;
     fp.region_bone = settings.flesh_region_bone;
     fp.region_firmness = settings.flesh_region_firmness;
-    flesh_solver_.apply(pos, nrm, fp);
+    fp.taper = settings.flesh_taper;
+    fp.taper_reach = settings.flesh_taper_reach;
+    fp.taper_falloff = settings.flesh_taper_falloff;
+
+    std::vector<FleshColliderShape> colliders;
+    build_flesh_colliders(pose, settings, colliders);
+    const std::uint64_t key = flesh_param_key(settings, colliders);
+
+    std::vector<Vec3> skinned;
+    const bool smooth = allow_smooth && settings.flesh_smooth > 0.0f;
+    if (smooth) skinned = pos;
+    flesh_solver_.apply(pos, nrm, fp, colliders);
+    if (smooth) {
+        const float blend = std::clamp(settings.flesh_smooth, 0.0f, 0.9f) * 0.8f;
+        // 只在真正连续的帧之间混合；拖时间轴 / 跳帧时重新取基准，避免拖影。
+        const bool contiguous = std::fabs(frame - (flesh_prev_frame_ + 1.0f)) < 0.75f &&
+                                key == flesh_prev_key_;
+        if (!contiguous) flesh_prev_delta_.clear();
+        smooth_flesh_pops(skinned, pos, flesh_prev_delta_, contiguous ? blend : 0.0f);
+        flesh_prev_frame_ = frame;
+        flesh_prev_key_ = key;
+    }
+}
+
+void SceneRenderer::upload_cpu_skin_flesh(const Model& model, Pose& pose,
+                                          const RenderSettings& settings) {
+    std::vector<FleshColliderShape> colliders;
+    build_flesh_colliders(pose, settings, colliders);
+    if (upload_baked_flesh(settings, pose, flesh_param_key(settings, colliders))) return;
+    std::vector<Vec3> pos, nrm;
+    deform_flesh(model, pose, settings, settings.flesh_frame, true, pos, nrm);
     upload_skinned(pos, nrm);
+}
+
+bool SceneRenderer::bake_flesh_frame(const Model& model, Pose& pose,
+                                     const RenderSettings& settings, int frame,
+                                     std::string* error) {
+    if (!flesh_solver_.valid()) {
+        if (error) *error = "模型没有可用的肉体拓扑";
+        return false;
+    }
+    RenderSettings local = settings;
+    local.flesh_cache = false;
+    std::vector<Vec3> pos, nrm;
+    deform_flesh(model, pose, local, static_cast<float>(frame), true, pos, nrm);
+
+    std::vector<FleshColliderShape> colliders;
+    build_flesh_colliders(pose, settings, colliders);
+    const std::uint64_t key = flesh_param_key(settings, colliders);
+
+    FleshBakeFrame dst;
+    dst.pos = std::move(pos);
+    dst.nrm = std::move(nrm);
+    dst.bones = pose.world();
+    dst.param_key = key;
+    auto frame_bytes = [](const FleshBakeFrame& f) {
+        return (f.pos.size() + f.nrm.size()) * sizeof(Vec3) + f.bones.size() * sizeof(Mat4);
+    };
+    const std::size_t bytes = frame_bytes(dst);
+    const auto old = flesh_cache_.find(frame);
+    if (old != flesh_cache_.end()) {
+        flesh_cache_bytes_ -= frame_bytes(old->second);
+        flesh_cache_.erase(old);
+    }
+    if (flesh_cache_bytes_ + bytes > kFleshCacheLimit) {
+        if (error) *error = "烘焙缓存超过 512 MB，请缩短区间或清理缓存";
+        return false;
+    }
+    flesh_cache_bytes_ += bytes;
+    flesh_cache_[frame] = std::move(dst);
+    return true;
+}
+
+void SceneRenderer::clear_flesh_cache() {
+    flesh_cache_.clear();
+    flesh_cache_bytes_ = 0;
+    flesh_cache_hits_ = 0;
+    flesh_prev_delta_.clear();
+    flesh_prev_frame_ = -1e9f;
+    flesh_prev_key_ = 0;
 }
 
 void SceneRenderer::upload_skinned(const std::vector<Vec3>& pos, const std::vector<Vec3>& nrm) {
@@ -1718,6 +1945,32 @@ void SceneRenderer::build_instances(const Model& model, Pose& pose, Physics* phy
         }
     }
 
+    // 肉体碰撞体：绿色半透明球 / 胶囊，跟随骨骼显示，便于在视口里对齐位置。
+    if (settings.flesh && settings.show_flesh_colliders) {
+        const Vec4 color(0.45f, 0.90f, 0.55f, 0.30f);
+        for (const FleshColliderSpec& c : settings.flesh_colliders) {
+            if (c.bone < 0 || c.bone >= pose.n) continue;
+            const Mat4& m = W[static_cast<std::size_t>(c.bone)];
+            const float r = std::max(0.001f, c.radius);
+            if (c.shape == 0) {
+                spheres.emplace_back(
+                    mul(m, mul(translation(c.offset), scale_mat(r, r, r))), color);
+            } else {
+                const float h = std::max(0.001f, c.length);
+                cylinders.emplace_back(
+                    mul(m, mul(translation(c.offset + Vec3(0.0f, h * 0.5f, 0.0f)),
+                              scale_mat(r, h, r))),
+                    color);
+                spheres.emplace_back(
+                    mul(m, mul(translation(c.offset), scale_mat(r, r, r))), color);
+                spheres.emplace_back(
+                    mul(m, mul(translation(c.offset + Vec3(0.0f, h, 0.0f)),
+                              scale_mat(r, r, r))),
+                    color);
+            }
+        }
+    }
+
     auto push_bucket = [this](const std::vector<Item>& items, int slot) {
         instance_counts_[slot] = static_cast<int>(items.size());
         for (const Item& it : items) {
@@ -2028,7 +2281,9 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
         }
     }
 
-    if (settings.show_rigid || settings.show_joints || focus_overlay_inst) {
+    const bool show_colliders =
+        settings.flesh && settings.show_flesh_colliders && !settings.flesh_colliders.empty();
+    if (settings.show_rigid || settings.show_joints || focus_overlay_inst || show_colliders) {
         build_instances(model, pose, physics, settings, selection);
         if (!inst_data_.empty()) {
             glBindBuffer(glc::GL_SHADER_STORAGE_BUFFER, overlay_instance_ssbo_);

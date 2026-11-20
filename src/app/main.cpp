@@ -198,6 +198,48 @@ void Viewer::apply_morphs() {
     morph_dirty = false;
 }
 
+pmx::RenderSettings Viewer::flesh_render_settings() const {
+    pmx::RenderSettings s;
+    s.flesh = flesh;
+    s.flesh_range = flesh_range;
+    s.flesh_dent = flesh_dent;
+    s.flesh_bulge = flesh_bulge;
+    s.flesh_width = flesh_width;
+    s.flesh_firmness = flesh_firmness;
+    s.flesh_region_bone = flesh_region_bone;
+    s.flesh_region_firmness = flesh_region_firmness;
+    s.flesh_taper = flesh_taper;
+    s.flesh_taper_reach = flesh_taper_reach;
+    s.flesh_taper_falloff = flesh_taper_falloff;
+    s.flesh_colliders = flesh_colliders;
+    s.show_flesh_colliders = flesh_colliders_visible;
+    s.flesh_cache = flesh_cache;
+    s.flesh_smooth = flesh_smooth;
+    s.flesh_frame = preview_mode ? motion_frame : -1.0f;
+    s.use_gpu_skinning = false;
+    return s;
+}
+
+bool Viewer::bake_flesh_frame(int frame, std::string* err) {
+    if (!pose) {
+        if (err) *err = "没有可用的姿态";
+        return false;
+    }
+    if (!preview_mode) {
+        if (err) *err = "只能在预览模式下烘焙动作";
+        return false;
+    }
+    motion_frame = static_cast<float>(frame);
+    apply_motion_frame();
+    if (morph_dirty) apply_morphs();
+    pose->apply(&morph_weights);
+    pose->solve_ik();
+    pose->world();
+    const pmx::RenderSettings fs = flesh_render_settings();
+    if (!renderer.bake_flesh_frame(model, *pose, fs, frame, err)) return false;
+    return true;
+}
+
 void Viewer::reset_physics() {
 #ifdef PMX_ENABLE_PHYSICS
     if (!physics_ptr) return;
@@ -1151,6 +1193,25 @@ void Viewer::draw_scene(int fb_w, int fb_h) {
     settings.shadow_strength = shadow_strength;
     settings.shadow_softness = shadow_softness;
     settings.shadow_ground = shadow_ground;
+
+    // 肉体参数与当前时间轴帧（烘焙缓存按整数帧查找）。
+    const pmx::RenderSettings fs = flesh_render_settings();
+    settings.flesh = fs.flesh;
+    settings.flesh_range = fs.flesh_range;
+    settings.flesh_dent = fs.flesh_dent;
+    settings.flesh_bulge = fs.flesh_bulge;
+    settings.flesh_width = fs.flesh_width;
+    settings.flesh_firmness = fs.flesh_firmness;
+    settings.flesh_region_bone = fs.flesh_region_bone;
+    settings.flesh_region_firmness = fs.flesh_region_firmness;
+    settings.flesh_taper = fs.flesh_taper;
+    settings.flesh_taper_reach = fs.flesh_taper_reach;
+    settings.flesh_taper_falloff = fs.flesh_taper_falloff;
+    settings.flesh_colliders = fs.flesh_colliders;
+    settings.show_flesh_colliders = fs.show_flesh_colliders;
+    settings.flesh_cache = fs.flesh_cache;
+    settings.flesh_smooth = fs.flesh_smooth;
+    settings.flesh_frame = fs.flesh_frame;
 
     // 场景相机 gizmo：有相机动作就显示机位线框；从相机视角取景时不画自己。
     settings.show_camera = false;

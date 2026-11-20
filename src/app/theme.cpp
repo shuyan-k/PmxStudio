@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 
 #ifdef _WIN32
@@ -389,6 +390,7 @@ bool pmxtheme::load_settings(Viewer& v, std::string* err) {
     v.grid_custom = false;
 
     std::string line;
+    v.flesh_colliders.clear();
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         const std::size_t eq = line.find('=');
@@ -396,6 +398,28 @@ bool pmxtheme::load_settings(Viewer& v, std::string* err) {
         const std::string key = trim(line.substr(0, eq));
         const std::string value = trim(line.substr(eq + 1));
         if (key.empty()) continue;
+
+        // flesh_collider_<i>=bone,shape,x,y,z,length,radius,firmness
+        if (key.rfind("flesh_collider_", 0) == 0) {
+            const int index = std::atoi(key.c_str() + 15);
+            if (index < 0 || index >= 256) continue;
+            std::string fields = value;
+            for (char& ch : fields)
+                if (ch == ',') ch = ' ';
+            std::istringstream stream(fields);
+            pmx::FleshColliderSpec spec;
+            int shape = 0;
+            stream >> spec.bone >> shape >> spec.offset.x >> spec.offset.y >>
+                spec.offset.z >> spec.length >> spec.radius >> spec.firmness;
+            spec.shape = shape == 1 ? 1 : 0;
+            spec.length = std::max(0.0f, spec.length);
+            spec.radius = std::clamp(spec.radius, 0.001f, 1000.0f);
+            spec.firmness = std::clamp(spec.firmness, 0.0f, 1.0f);
+            if (static_cast<int>(v.flesh_colliders.size()) <= index)
+                v.flesh_colliders.resize(static_cast<std::size_t>(index) + 1);
+            v.flesh_colliders[static_cast<std::size_t>(index)] = spec;
+            continue;
+        }
 
         bool flag = false;
         float number = 0.0f;
@@ -483,6 +507,18 @@ bool pmxtheme::load_settings(Viewer& v, std::string* err) {
             v.flesh_region_firmness = std::clamp(number, 0.0f, 1.0f);
         } else if (key == "flesh_region_bone" && parse_int(value, integer)) {
             v.flesh_region_bone = integer;
+        } else if (key == "flesh_taper" && parse_float(value, number)) {
+            v.flesh_taper = std::clamp(number, 0.0f, 1.0f);
+        } else if (key == "flesh_taper_reach" && parse_float(value, number)) {
+            v.flesh_taper_reach = std::clamp(number, 0.05f, 3.0f);
+        } else if (key == "flesh_taper_falloff" && parse_float(value, number)) {
+            v.flesh_taper_falloff = std::clamp(number, 0.1f, 4.0f);
+        } else if (key == "flesh_smooth" && parse_float(value, number)) {
+            v.flesh_smooth = std::clamp(number, 0.0f, 0.9f);
+        } else if (key == "flesh_cache" && parse_bool(value, flag)) {
+            v.flesh_cache = flag;
+        } else if (key == "flesh_colliders_visible" && parse_bool(value, flag)) {
+            v.flesh_colliders_visible = flag;
         } else if (key == "cam_fov" && parse_float(value, number)) {
             v.camera.fov = std::clamp(number, 5.0f, 120.0f);
         } else if (key == "cam_ortho" && parse_bool(value, flag)) {
@@ -565,6 +601,18 @@ void pmxtheme::save_settings(const Viewer& v) {
         out << "flesh_firmness=" << v.flesh_firmness << '\n';
         out << "flesh_region_bone=" << v.flesh_region_bone << '\n';
         out << "flesh_region_firmness=" << v.flesh_region_firmness << '\n';
+        out << "flesh_taper=" << v.flesh_taper << '\n';
+        out << "flesh_taper_reach=" << v.flesh_taper_reach << '\n';
+        out << "flesh_taper_falloff=" << v.flesh_taper_falloff << '\n';
+        out << "flesh_smooth=" << v.flesh_smooth << '\n';
+        out << "flesh_cache=" << as_bit(v.flesh_cache) << '\n';
+        out << "flesh_colliders_visible=" << as_bit(v.flesh_colliders_visible) << '\n';
+        for (std::size_t i = 0; i < v.flesh_colliders.size(); ++i) {
+            const pmx::FleshColliderSpec& c = v.flesh_colliders[i];
+            out << "flesh_collider_" << i << '=' << c.bone << ',' << c.shape << ','
+                << c.offset.x << ',' << c.offset.y << ',' << c.offset.z << ',' << c.length
+                << ',' << c.radius << ',' << c.firmness << '\n';
+        }
         out << "cam_fov=" << v.camera.fov << '\n';
         out << "cam_ortho=" << as_bit(v.camera.ortho) << '\n';
         out << "cam_ortho_scale=" << v.camera.ortho_scale << '\n';

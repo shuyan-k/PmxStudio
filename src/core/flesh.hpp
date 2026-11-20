@@ -1,6 +1,6 @@
-// 接触式肉体变形（第一阶段）：自接触检测 + 凹陷/隆起 + 区域软硬。
-// 逐帧、无状态：只依赖当前蒙皮后的顶点位置，不做模拟，因此拖动时间轴、
-// 跳帧渲染都得到一致结果。
+// 接触式肉体变形：自接触检测 + 凹陷/隆起 + 区域软硬 + 折痕端回收（Corner Taper）
+// + 外部碰撞体。逐帧、无状态：只依赖当前蒙皮后的顶点位置，不做模拟，因此拖动时间轴、
+// 跳帧渲染都得到一致结果（Smooth Pops 的时间平滑放在渲染器/烘焙侧）。
 #pragma once
 
 #include <array>
@@ -13,6 +13,16 @@
 namespace pmx {
 
 class Model;
+
+// 由骨骼姿态换算到世界空间的碰撞体：球（a 为球心）或胶囊（a→b）。
+struct FleshColliderShape {
+    Vec3 a{0.0f, 0.0f, 0.0f};
+    Vec3 b{0.0f, 0.0f, 0.0f};
+    float radius = 0.1f;
+    // 0 最软，1 完全不让肉体形变。
+    float firmness = 0.0f;
+    bool capsule = false;
+};
 
 struct FleshParams {
     // 自接触检测距离，占模型身高的比例。
@@ -27,7 +37,19 @@ struct FleshParams {
     // 区域硬度：该骨骼影响的顶点额外变硬（-1 表示关闭）。
     int region_bone = -1;
     float region_firmness = 0.7f;
+    // Corner Taper：折痕闭合端回收隆起。reach 是隆起半径的倍数，
+    // falloff 控制从端部向折痕中段过渡的曲线（越大越集中在端点）。
+    float taper = 0.55f;
+    float taper_reach = 0.70f;
+    float taper_falloff = 1.0f;
+    // 0 = 自动（按顶点数启用多线程），1 = 强制单线程（调试/测试）。
+    int threads = 0;
 };
+
+// Smooth Pops：把当前肉体位移与上一帧做指数混合，抑制接触状态翻转造成的单帧跳变。
+// skinned 为未形变坐标，pos 为形变结果（原地修改），prev 保存上一帧位移。
+void smooth_flesh_pops(const std::vector<Vec3>& skinned, std::vector<Vec3>& pos,
+                       std::vector<Vec3>& prev, float blend);
 
 class FleshSolver {
 public:
@@ -38,7 +60,8 @@ public:
     float height() const { return height_; }
 
     // pos/nrm 为蒙皮后的顶点；原地写入形变结果，并在形变区域重算法线。
-    void apply(std::vector<Vec3>& pos, std::vector<Vec3>& nrm, const FleshParams& params) const;
+    void apply(std::vector<Vec3>& pos, std::vector<Vec3>& nrm, const FleshParams& params,
+               const std::vector<FleshColliderShape>& colliders = {}) const;
 
 private:
     int n_ = 0;

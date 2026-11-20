@@ -103,7 +103,7 @@ struct Viewer {
     float shadow_softness = 1.0f;
     bool shadow_ground = true;
 
-    // 接触式肉体变形（第一阶段）：自接触凹陷 + 周边隆起，需 CPU 蒙皮。
+    // 接触式肉体变形：自接触凹陷 + 周边隆起，需 CPU 蒙皮。
     bool flesh = false;
     float flesh_range = 0.012f;
     float flesh_dent = 0.60f;
@@ -112,6 +112,21 @@ struct Viewer {
     float flesh_firmness = 0.0f;
     int flesh_region_bone = -1;
     float flesh_region_firmness = 0.7f;
+    // Corner Taper：折痕闭合端回收隆起。
+    float flesh_taper = 0.55f;
+    float flesh_taper_reach = 0.70f;
+    float flesh_taper_falloff = 1.0f;
+    // 外部碰撞体：随骨骼运动，按各自硬度压入肉体。
+    std::vector<pmx::FleshColliderSpec> flesh_colliders;
+    bool flesh_colliders_visible = true;
+    // 烘焙缓存 + Smooth Pops。
+    bool flesh_cache = false;
+    float flesh_smooth = 0.5f;
+    bool flesh_bake_active = false;
+    int flesh_bake_next = 0;
+    int flesh_bake_end = 0;
+    float flesh_bake_saved_frame = 0.0f;
+    bool flesh_bake_saved_playing = false;
 
     // VMD 模型动作（骨骼 / 形态 / IK）：导入后按 30 fps 时间轴播放；暂停时保留当前帧姿态。
     // 同一文件里的相机帧不放在这里，导入时拆进 camera_motion。
@@ -280,6 +295,10 @@ struct Viewer {
     void apply_manual_ik_mutes();
     bool save_model(const std::string& path, std::string* err);
     void apply_morphs();
+    // 只拷贝肉体相关的渲染参数：面板烘焙与无头 API 共用，避免两处默认值漂移。
+    pmx::RenderSettings flesh_render_settings() const;
+    // 烘焙单帧肉体：应用该帧动作 / 形态 / IK 后写入渲染器缓存。
+    bool bake_flesh_frame(int frame, std::string* err);
     void reset_physics();
     // 播放中的「软复位」：只清速度，不重摆刚体（MMD/Blender 播放时就是这种行为）。
     void settle_physics();
