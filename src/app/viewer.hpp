@@ -105,6 +105,9 @@ struct Viewer {
 
     // 接触式肉体变形：自接触凹陷 + 周边隆起。GPU 路径默认开启，
     // 不可用（着色器编译失败 / 无上下文）时自动回退 CPU 多线程。
+    // 暂时停用：目前效果未达预期，代码与求解器保留，后续完善后再开放。
+    // 改回 true 即可恢复「肉体」面板入口与求解（含 API / 烘焙）。
+    static constexpr bool kFleshEnabled = false;
     bool flesh = false;
     bool flesh_gpu = true;
     // 渲染器反馈：GPU 肉体是否可用 / 本帧是否真的走了 GPU。

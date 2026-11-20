@@ -439,7 +439,8 @@ JsonValue settings_json(const Viewer& viewer) {
     pmx::json_set(out, "shadow_strength", pmx::json_number(viewer.shadow_strength));
     pmx::json_set(out, "shadow_softness", pmx::json_number(viewer.shadow_softness));
     pmx::json_set(out, "shadow_ground", pmx::json_bool(viewer.shadow_ground));
-    pmx::json_set(out, "flesh", pmx::json_bool(viewer.flesh));
+    // 肉体求解暂时停用：对外始终报告关闭，避免脚本误以为已生效。
+    pmx::json_set(out, "flesh", pmx::json_bool(Viewer::kFleshEnabled && viewer.flesh));
     pmx::json_set(out, "flesh_gpu", pmx::json_bool(viewer.flesh_gpu));
     pmx::json_set(out, "flesh_gpu_available", pmx::json_bool(viewer.flesh_gpu_available));
     pmx::json_set(out, "flesh_gpu_active", pmx::json_bool(viewer.flesh_gpu_active));
@@ -1185,6 +1186,7 @@ JsonValue cmd_animation_play(Viewer& viewer, const JsonValue& params) {
 }
 
 JsonValue cmd_flesh_bake(Viewer& viewer, const JsonValue& params) {
+    if (!Viewer::kFleshEnabled) throw ApiError{"肉体求解已暂时停用"};
     if (!viewer.pose) throw ApiError{"尚未加载模型"};
     if (!viewer.flesh) throw ApiError{"先启用肉体变形（scene.settings: flesh=true）"};
     if (!viewer.preview_mode) viewer.set_preview_mode(true);
