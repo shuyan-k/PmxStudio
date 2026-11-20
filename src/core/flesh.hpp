@@ -1,0 +1,58 @@
+// 接触式肉体变形（第一阶段）：自接触检测 + 凹陷/隆起 + 区域软硬。
+// 逐帧、无状态：只依赖当前蒙皮后的顶点位置，不做模拟，因此拖动时间轴、
+// 跳帧渲染都得到一致结果。
+#pragma once
+
+#include <array>
+#include <cstdint>
+#include <unordered_set>
+#include <vector>
+
+#include "core/math.hpp"
+
+namespace pmx {
+
+class Model;
+
+struct FleshParams {
+    // 自接触检测距离，占模型身高的比例。
+    float range = 0.012f;
+    // 凹陷深度：接触余量的比例，1 表示两侧各压入一半、刚好合拢。
+    float dent = 0.6f;
+    // 隆起强度；宽度是接触距离的倍数（隆起影响半径）。
+    float bulge = 1.0f;
+    float width = 3.0f;
+    // 整体硬度：1 时完全不形变。
+    float firmness = 0.0f;
+    // 区域硬度：该骨骼影响的顶点额外变硬（-1 表示关闭）。
+    int region_bone = -1;
+    float region_firmness = 0.7f;
+};
+
+class FleshSolver {
+public:
+    // 结构变化（加载模型 / 编辑顶点）后重建焊接拓扑。
+    void reset(const Model& model);
+    void clear();
+    bool valid() const { return cn_ > 0; }
+    float height() const { return height_; }
+
+    // pos/nrm 为蒙皮后的顶点；原地写入形变结果，并在形变区域重算法线。
+    void apply(std::vector<Vec3>& pos, std::vector<Vec3>& nrm, const FleshParams& params) const;
+
+private:
+    int n_ = 0;
+    int cn_ = 0;
+    float height_ = 1.0f;
+    // 原始顶点 -> 焊接后的顶点；重复顶点（UV 缝/材质边界）共享同一个焊接点。
+    std::vector<int> canon_;
+    std::vector<int> rep_;  // 焊接点对应的第一个原始顶点，用于读取骨骼权重
+    std::vector<std::uint8_t> counts_;
+    std::vector<std::array<int, 4>> bones_;
+    std::vector<std::array<float, 4>> weights_;
+    std::vector<std::array<int, 3>> tris_;
+    // 共享边的焊接顶点对：相邻面在折痕处会靠得很近，不能当作自接触。
+    std::unordered_set<std::uint64_t> edges_;
+};
+
+}  // namespace pmx

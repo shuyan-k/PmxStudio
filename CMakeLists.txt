@@ -58,6 +58,7 @@ set(PMX_CORE_SOURCES
     src/core/model.cpp
     src/core/pose.cpp
     src/core/skinning.cpp
+    src/core/flesh.cpp
     src/core/morph.cpp
     src/core/vpd.cpp
     src/core/vmd.cpp

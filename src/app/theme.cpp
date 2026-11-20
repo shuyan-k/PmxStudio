@@ -467,6 +467,22 @@ bool pmxtheme::load_settings(Viewer& v, std::string* err) {
             v.shadow_softness = std::clamp(number, 0.5f, 3.0f);
         } else if (key == "shadow_ground" && parse_bool(value, flag)) {
             v.shadow_ground = flag;
+        } else if (key == "flesh" && parse_bool(value, flag)) {
+            v.flesh = flag;
+        } else if (key == "flesh_range" && parse_float(value, number)) {
+            v.flesh_range = std::clamp(number, 0.001f, 0.08f);
+        } else if (key == "flesh_dent" && parse_float(value, number)) {
+            v.flesh_dent = std::clamp(number, 0.0f, 1.0f);
+        } else if (key == "flesh_bulge" && parse_float(value, number)) {
+            v.flesh_bulge = std::clamp(number, 0.0f, 2.0f);
+        } else if (key == "flesh_width" && parse_float(value, number)) {
+            v.flesh_width = std::clamp(number, 0.5f, 12.0f);
+        } else if (key == "flesh_firmness" && parse_float(value, number)) {
+            v.flesh_firmness = std::clamp(number, 0.0f, 1.0f);
+        } else if (key == "flesh_region_firmness" && parse_float(value, number)) {
+            v.flesh_region_firmness = std::clamp(number, 0.0f, 1.0f);
+        } else if (key == "flesh_region_bone" && parse_int(value, integer)) {
+            v.flesh_region_bone = integer;
         } else if (key == "cam_fov" && parse_float(value, number)) {
             v.camera.fov = std::clamp(number, 5.0f, 120.0f);
         } else if (key == "cam_ortho" && parse_bool(value, flag)) {
@@ -541,6 +557,14 @@ void pmxtheme::save_settings(const Viewer& v) {
         out << "shadow_strength=" << v.shadow_strength << '\n';
         out << "shadow_softness=" << v.shadow_softness << '\n';
         out << "shadow_ground=" << as_bit(v.shadow_ground) << '\n';
+        out << "flesh=" << as_bit(v.flesh) << '\n';
+        out << "flesh_range=" << v.flesh_range << '\n';
+        out << "flesh_dent=" << v.flesh_dent << '\n';
+        out << "flesh_bulge=" << v.flesh_bulge << '\n';
+        out << "flesh_width=" << v.flesh_width << '\n';
+        out << "flesh_firmness=" << v.flesh_firmness << '\n';
+        out << "flesh_region_bone=" << v.flesh_region_bone << '\n';
+        out << "flesh_region_firmness=" << v.flesh_region_firmness << '\n';
         out << "cam_fov=" << v.camera.fov << '\n';
         out << "cam_ortho=" << as_bit(v.camera.ortho) << '\n';
         out << "cam_ortho_scale=" << v.camera.ortho_scale << '\n';

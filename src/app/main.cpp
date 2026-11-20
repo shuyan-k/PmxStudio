@@ -1017,6 +1017,7 @@ void Viewer::draw_ui() {
             tab("物理", &panel_preview_physics);
             tab("形态", &panel_preview_morph);
             tab("灯光", &panel_light);
+            tab("肉体", &panel_flesh);
             tab("设置", &panel_settings);
         } else {
             tab("信息", &panel_info);
@@ -1029,6 +1030,7 @@ void Viewer::draw_ui() {
             tab("物理", &panel_physics);
             tab("柔体", &panel_soft);
             tab("灯光", &panel_light);
+            tab("肉体", &panel_flesh);
             tab("设置", &panel_settings);
         }
         ImGui::EndTabBar();

@@ -1111,6 +1111,8 @@ void SceneRenderer::release_model() {
     textures_.clear();
     texture_by_index_.clear();
     texture_index_ready_.clear();
+    base_pos_.clear();
+    flesh_solver_.clear();
 }
 
 bool SceneRenderer::upload_model(const Model& model, std::string* error) {
@@ -1267,12 +1269,22 @@ bool SceneRenderer::upload_model(const Model& model, std::string* error) {
     // 贴图索引缓存随模型一起重建：每个索引只解析一次路径。
     texture_by_index_.assign(model.textures.size(), Texture{});
     texture_index_ready_.assign(model.textures.size(), 0);
+    // 肉体变形的焊接拓扑与 CPU 蒙皮基准坐标随模型结构重建。
+    flesh_solver_.reset(model);
+    base_pos_ = model.vertices.pos;
     return true;
 }
 
 void SceneRenderer::update_base(const Model& model, const VertexMorphResult& morph) {
     if (model_.vbo == 0) return;
     if (morph.pos == nullptr || morph.uv == nullptr) return;
+    // CPU 蒙皮路径（肉体变形）从这份坐标取值，必须与 VBO 的形态结果同步；
+    // 形态恢复为 0 时也要覆盖，否则会残留上一帧的顶点位置。
+    if (morph.pos->size() == model.vertices.size()) {
+        base_pos_.assign(morph.pos->begin(), morph.pos->end());
+    } else {
+        base_pos_.clear();
+    }
     if (morph.pos == &model.vertices.pos && morph.uv == &model.vertices.uv) return;
     const int nv = static_cast<int>(model.vertices.size());
     glBindBuffer(glc::GL_SHADER_STORAGE_BUFFER, model_.vbo);
@@ -1362,7 +1374,30 @@ void SceneRenderer::dispatch_gpu_skin() {
 void SceneRenderer::upload_cpu_skin(const Model& model, Pose& pose) {
     SkinDeformer deformer(model);
     std::vector<Vec3> pos, nrm;
-    deformer.deform(model.vertices.pos, model.vertices.nrm, pose.world(), pos, nrm);
+    const auto& base = base_pos_.size() == model.vertices.size() ? base_pos_ : model.vertices.pos;
+    deformer.deform(base, model.vertices.nrm, pose.world(), pos, nrm);
+    upload_skinned(pos, nrm);
+}
+
+void SceneRenderer::upload_cpu_skin_flesh(const Model& model, Pose& pose,
+                                          const RenderSettings& settings) {
+    SkinDeformer deformer(model);
+    std::vector<Vec3> pos, nrm;
+    const auto& base = base_pos_.size() == model.vertices.size() ? base_pos_ : model.vertices.pos;
+    deformer.deform(base, model.vertices.nrm, pose.world(), pos, nrm);
+    FleshParams fp;
+    fp.range = settings.flesh_range;
+    fp.dent = settings.flesh_dent;
+    fp.bulge = settings.flesh_bulge;
+    fp.width = settings.flesh_width;
+    fp.firmness = settings.flesh_firmness;
+    fp.region_bone = settings.flesh_region_bone;
+    fp.region_firmness = settings.flesh_region_firmness;
+    flesh_solver_.apply(pos, nrm, fp);
+    upload_skinned(pos, nrm);
+}
+
+void SceneRenderer::upload_skinned(const std::vector<Vec3>& pos, const std::vector<Vec3>& nrm) {
     std::vector<float> pbuf(static_cast<std::size_t>(pos.size()) * 4);
     std::vector<float> nbuf(static_cast<std::size_t>(nrm.size()) * 4);
     for (std::size_t i = 0; i < pos.size(); ++i) {
@@ -1732,9 +1767,11 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
     // ---- 蒙皮：GPU 计算着色器写 outPos/outNrm，CPU 路径则直接上传
     // 必须先于阴影 pass：阴影深度图读取的是蒙皮后的位置。
     upload_skin_matrices(model, pose);
-    if (settings.use_gpu_skinning) dispatch_gpu_skin();
+    // 肉体变形需要在 CPU 侧访问蒙皮后的顶点，启用时自动改走 CPU 蒙皮。
+    if (settings.flesh) upload_cpu_skin_flesh(model, pose, settings);
+    else if (settings.use_gpu_skinning) dispatch_gpu_skin();
     else upload_cpu_skin(model, pose);
-    if (settings.use_gpu_skinning && gpu_check_enabled_ && !gpu_checked_) {
+    if (!settings.flesh && settings.use_gpu_skinning && gpu_check_enabled_ && !gpu_checked_) {
         validate_gpu_skin(model, pose);
         gpu_checked_ = true;
     }

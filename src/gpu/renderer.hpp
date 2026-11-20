@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/flesh.hpp"
 #include "core/math.hpp"
 #include "core/morph.hpp"
 #include "core/pmx.hpp"
@@ -65,6 +66,17 @@ struct RenderSettings {
     float shadow_strength = 0.65f;
     float shadow_softness = 1.0f;
     bool shadow_ground = true;
+
+    // 接触式肉体变形（第一阶段）：自接触凹陷 + 周边隆起。
+    // 启用后蒙皮走 CPU 路径（需要在求解器里访问顶点位置），区域硬度按骨骼权重生效。
+    bool flesh = false;
+    float flesh_range = 0.012f;   // 自接触距离（占身高比例）
+    float flesh_dent = 0.60f;     // 凹陷深度
+    float flesh_bulge = 1.0f;     // 隆起强度
+    float flesh_width = 3.0f;     // 隆起范围（× 接触距离）
+    float flesh_firmness = 0.0f;  // 整体硬度
+    int flesh_region_bone = -1;   // 额外硬区域骨骼
+    float flesh_region_firmness = 0.7f;
 
     // 场景相机可视化（Blender 风格）：机位线框 + 取景锥。
     bool show_camera = false;
@@ -232,6 +244,11 @@ private:
     GLuint ground_vao_ = 0;
     GLuint ground_vbo_ = 0;
 
+    // 顶点形态（含表情/口型）后的静止坐标，CPU 蒙皮用；GPU 路径由 VBO 提供。
+    std::vector<Vec3> base_pos_;
+    // 自接触求解器：结构变化时 reset，逐帧形变不改变拓扑。
+    FleshSolver flesh_solver_;
+
     std::vector<float> skin_matrices_;
     std::vector<float> inst_data_;
     std::vector<float> bone_verts_;
@@ -278,6 +295,8 @@ private:
     void upload_skin_matrices(const Model& model, Pose& pose);
     void dispatch_gpu_skin();
     void upload_cpu_skin(const Model& model, Pose& pose);
+    void upload_cpu_skin_flesh(const Model& model, Pose& pose, const RenderSettings& settings);
+    void upload_skinned(const std::vector<Vec3>& pos, const std::vector<Vec3>& nrm);
 };
 
 }  // namespace pmx
