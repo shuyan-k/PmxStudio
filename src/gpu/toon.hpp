@@ -90,7 +90,9 @@ void main() {
     vec3 light = normalize(uLightDir);
     float ndl = dot(n, light);
     float ndl_c = max(ndl, 0.0);
-    float lambert = 0.54 + 0.16 * ndl_c;
+    // 背光侧保留 0.30 的直射光底、受光侧升到 1.0：灯光方向改变时
+    // 整个模型都有明确的明暗过渡，而不只是明暗交界处的一条窄带。
+    float lambert = 0.30 + 0.70 * ndl_c;
     // Toon 光照：ramp 贴图只参与阴影侧调制，亮面保持解析光照。
     // 直接把 ramp 当作 shade 会被"大面积纯白"的 toon 压平（例如 57 个材质
     // 共用 toon3/toon4、85% 是纯白），整只模型失去明暗；mmd_tools 同样只
@@ -99,22 +101,25 @@ void main() {
     if (uUseToonTex == 1) {
         float ramp = dot(texture(uToonTex, vec2(0.5, clamp(ndl, 0.0, 1.0))).rgb,
                          vec3(0.299, 0.587, 0.114));
-        float lit = 0.78 + 0.22 * ndl_c;
+        float lit = 0.55 + 0.45 * ndl_c;
         // 明暗分界的过渡宽度由 uToonEdge 控制：越小越接近 MMD 的硬边，
         // 过大会让整块阴影变成渐变，观感发虚。
         float shadow = 1.0 - smoothstep(0.0, max(uToonEdge, 0.01), ndl_c);
         shade = mix(lambert, lit * mix(1.0, ramp, shadow), uToon);
     } else {
-        float toon = 0.58 + 0.12 * smoothstep(0.20, 0.80, ndl_c);
+        float toon = 0.60 + 0.40 * smoothstep(0.20, 0.80, ndl_c);
         shade = mix(lambert, toon, uToon);
     }
     // 阴影只调制直射光：暗部仍保留环境色，避免阴影里变成纯黑。
     float shadow = mix(1.0, shadow_visibility(vWorld, n, ndl_c), uShadowStrength);
     shade *= shadow;
     // 照明色 × 强度作用在直射光上；环境色乘在暗部（MMD 的「環境色」）。
-    // 默认 白光/强度 1/白色环境时与旧公式完全一致，只是多了可调范围。
+    // 环境色必须先乘一个固定强度：若直接 mix(ambient, 1, shade)，当环境色为
+    // 纯白（默认值）时两端都是 1，整个漫反射恒为 1，模型完全不随灯光方向变化，
+    // 只有骨骼叠加层（另一套 solid 着色器）在变——看起来像灯光绑定到了骨骼上。
+    const float kAmbientStrength = 0.32;
     vec3 light_rgb = uLightColor * uLightIntensity;
-    vec3 col = base.rgb * mix(uSceneAmbient, vec3(1.0), shade) * light_rgb;
+    vec3 col = base.rgb * mix(uSceneAmbient * kAmbientStrength, vec3(1.0), shade) * light_rgb;
     col += uAmbient * base.rgb * uSceneAmbient * 0.06;
     float spec = pow(max(ndl, 0.0), 14.0) * uSpecCoef * shadow;
     col += uSpecular * spec * light_rgb;
