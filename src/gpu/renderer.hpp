@@ -60,6 +60,12 @@ struct RenderSettings {
     // 视口里画一个太阳标记与方向箭头（Blender 的灯光 gizmo）。
     bool show_light = true;
 
+    // 方向光实时阴影：深度贴图 + 3×3 PCF；地面用 shadow catcher 接收投影。
+    bool shadows = true;
+    float shadow_strength = 0.65f;
+    float shadow_softness = 1.0f;
+    bool shadow_ground = true;
+
     // 场景相机可视化（Blender 风格）：机位线框 + 取景锥。
     bool show_camera = false;
     bool camera_valid = false;
@@ -207,7 +213,22 @@ private:
     ShaderProgram solid_program_;
     ShaderProgram inst_program_;
     ShaderProgram line_program_;
+    ShaderProgram shadow_program_;
+    ShaderProgram ground_program_;
     bool ready_ = false;
+
+    // 方向光阴影贴图与地面接影。shadow_size_ 固定 2048：对 MMD 模型尺寸足够，
+    // 也不需要随窗口缩放重建。
+    GLuint shadow_fbo_ = 0;
+    GLuint shadow_tex_ = 0;
+    GLsizei shadow_size_ = 2048;
+    Mat4 light_view_proj_;
+    float shadow_texel_ = 1.0f / 2048.0f;
+    float shadow_bias_ = 0.05f;
+    Vec3 scene_center_{0.0f, 8.0f, 0.0f};
+    float scene_radius_ = 20.0f;
+    GLuint ground_vao_ = 0;
+    GLuint ground_vbo_ = 0;
 
     std::vector<float> skin_matrices_;
     std::vector<float> inst_data_;
@@ -235,6 +256,11 @@ private:
     void build_grid(const RenderSettings& settings);
     void ensure_grid(const RenderSettings& settings);
     void build_toon_ramps();
+    bool build_shadow_map(std::string* error);
+    void build_ground();
+    void update_light_matrix(const RenderSettings& settings);
+    void draw_shadow_map(const Model& model, const RenderSettings& settings);
+    void draw_ground_shadow(const RenderSettings& settings, const Mat4& vp);
     void rebuild_bone_overlay(const Model& model, Pose& pose, const RenderSettings& settings,
                               const Selection& selection);
     // 场景相机 gizmo：机身线框 + 前端取景锥，尺寸按到视点距离自适应。

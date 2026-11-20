@@ -54,6 +54,33 @@ uniform float uLightIntensity;
 uniform vec3 uSceneAmbient;
 uniform vec3 uEye;
 uniform mat4 uView;
+// 方向光阴影贴图：uLightVP 把世界坐标投到光源裁剪空间，uShadows 为 0 时完全跳过。
+uniform sampler2D uShadowMap;
+uniform mat4 uLightVP;
+uniform int uShadows;
+uniform float uShadowStrength;
+uniform float uShadowSoftness;
+uniform float uShadowTexel;
+uniform float uShadowBias;
+float shadow_visibility(vec3 world, vec3 n, float ndl) {
+    if (uShadows == 0) return 1.0;
+    // 法线偏移：沿法线离开表面一小段，抵消深度贴图的采样误差，避免自阴影条纹。
+    // uShadowBias 是光源空间一个纹素对应的世界尺寸，法线越背离光源偏移越大。
+    float offset = uShadowBias * mix(1.0, 2.5, 1.0 - clamp(ndl, 0.0, 1.0));
+    vec4 lp = uLightVP * vec4(world + n * offset, 1.0);
+    vec3 sc = lp.xyz / lp.w * 0.5 + 0.5;
+    if (sc.z > 1.0 || sc.x < 0.0 || sc.x > 1.0 || sc.y < 0.0 || sc.y > 1.0) return 1.0;
+    // 再留一点深度偏置，薄片/共面层（睫毛、衣领）也不容易产生摩尔纹。
+    float ref = sc.z - 0.0008;
+    float step = uShadowTexel * max(uShadowSoftness, 0.5);
+    float sum = 0.0;
+    for (int y = -2; y <= 2; ++y)
+        for (int x = -2; x <= 2; ++x) {
+            float d = texture(uShadowMap, sc.xy + vec2(x, y) * step).r;
+            sum += ref <= d ? 1.0 : 0.0;
+        }
+    return sum / 25.0;
+}
 void main() {
     vec4 tex = uUseTex == 1 ? texture(uTex, vUV) : vec4(1.0);
     if (tex.a < 0.02) discard;
@@ -81,12 +108,15 @@ void main() {
         float toon = 0.58 + 0.12 * smoothstep(0.20, 0.80, ndl_c);
         shade = mix(lambert, toon, uToon);
     }
+    // 阴影只调制直射光：暗部仍保留环境色，避免阴影里变成纯黑。
+    float shadow = mix(1.0, shadow_visibility(vWorld, n, ndl_c), uShadowStrength);
+    shade *= shadow;
     // 照明色 × 强度作用在直射光上；环境色乘在暗部（MMD 的「環境色」）。
     // 默认 白光/强度 1/白色环境时与旧公式完全一致，只是多了可调范围。
     vec3 light_rgb = uLightColor * uLightIntensity;
     vec3 col = base.rgb * mix(uSceneAmbient, vec3(1.0), shade) * light_rgb;
     col += uAmbient * base.rgb * uSceneAmbient * 0.06;
-    float spec = pow(max(ndl, 0.0), 14.0) * uSpecCoef;
+    float spec = pow(max(ndl, 0.0), 14.0) * uSpecCoef * shadow;
     col += uSpecular * spec * light_rgb;
     // 球面贴图按相机空间法线的 XY 采样（MMD 约定），转动视角时高光会滑动。
     if (uUseSphere == 1) {
@@ -139,6 +169,59 @@ void main() {
     // 填满被网格丢弃的透明像素，整片变成描边色（红褐色）。
     if (uUseTex == 1 && texture(uTex, vUV).a < 0.02) discard;
     fragColor = uOutlineColor;
+}
+)";
+
+// 阴影深度 pass：顶点沿用网格着色器（读取蒙皮后 SSBO），片元只做贴图 alpha 裁剪，
+// 让发丝、蕾丝等镂空材质投出正确形状的阴影。没有颜色输出，只写深度。
+inline const char* const shadow_fragment_source = R"(#version 460 core
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uTex;
+uniform int uUseTex;
+void main() {
+    if (uUseTex == 1 && texture(uTex, vUV).a < 0.5) discard;
+    fragColor = vec4(1.0);
+}
+)";
+
+// 地面接影：只在实际被遮挡的区域输出半透明暗色（shadow catcher），
+// 未遮挡处完全透明，因此不会改变现有背景与网格的外观。
+inline const char* const ground_vertex_source = R"(#version 460 core
+layout(location = 0) in vec3 aPos;
+uniform mat4 uMVP;
+out vec3 vWorld;
+void main() {
+    vWorld = aPos;
+    gl_Position = uMVP * vec4(aPos, 1.0);
+}
+)";
+
+inline const char* const ground_fragment_source = R"(#version 460 core
+in vec3 vWorld;
+out vec4 fragColor;
+uniform sampler2D uShadowMap;
+uniform mat4 uLightVP;
+uniform float uShadowStrength;
+uniform float uShadowSoftness;
+uniform float uShadowTexel;
+uniform vec3 uShadowColor;
+void main() {
+    vec4 lp = uLightVP * vec4(vWorld, 1.0);
+    vec3 sc = lp.xyz / lp.w * 0.5 + 0.5;
+    float vis = 1.0;
+    if (sc.z <= 1.0 && sc.x >= 0.0 && sc.x <= 1.0 && sc.y >= 0.0 && sc.y <= 1.0) {
+        float ref = sc.z - 0.0008;
+        float step = uShadowTexel * max(uShadowSoftness, 0.5);
+        float sum = 0.0;
+        for (int y = -2; y <= 2; ++y)
+            for (int x = -2; x <= 2; ++x)
+                sum += ref <= texture(uShadowMap, sc.xy + vec2(x, y) * step).r ? 1.0 : 0.0;
+        vis = sum / 25.0;
+    }
+    float a = (1.0 - vis) * uShadowStrength;
+    if (a < 0.004) discard;
+    fragColor = vec4(uShadowColor, a);
 }
 )";
 

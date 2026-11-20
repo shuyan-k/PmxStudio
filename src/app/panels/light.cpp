@@ -69,6 +69,21 @@ void panel_light(Viewer& v) {
                       ImGuiColorEditFlags_DisplayRGB | ImGuiColorEditFlags_Float);
     ImGui::SetItemTooltip("乘在暗部，相当于 MMD 的「環境色」：调暗则阴影更深");
 
+    // ------------------------------------------------------------ 阴影
+    ImGui::SeparatorText("阴影");
+    ImGui::Checkbox("启用方向光阴影##shadows", &v.shadows);
+    ImGui::SetItemTooltip("2048² 深度贴图 + 3×3 PCF；关闭后回到纯卡通明暗，没有投影");
+    if (v.shadows) {
+        ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+        ImGui::SliderFloat("强度##shadow_strength", &v.shadow_strength, 0.0f, 1.0f, "%.2f");
+        ImGui::SetItemTooltip("遮挡区压暗的比例；阴影里仍保留环境色，不会变成纯黑");
+        ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+        ImGui::SliderFloat("柔和度##shadow_softness", &v.shadow_softness, 0.5f, 3.0f, "%.2f");
+        ImGui::SetItemTooltip("PCF 采样间距（纹素）：越小边缘越硬，越接近 MMD 的硬边阴影");
+        ImGui::Checkbox("地面接影##shadow_ground", &v.shadow_ground);
+        ImGui::SetItemTooltip("在地面网格上显示模型投下的阴影，只压暗被遮挡区域");
+    }
+
     // ------------------------------------------------------------ 预设
     ImGui::SeparatorText("预设");
     for (int i = 0; i < static_cast<int>(sizeof(kPresets) / sizeof(kPresets[0])); ++i) {
@@ -86,6 +101,10 @@ void panel_light(Viewer& v) {
         v.light_color[0] = v.light_color[1] = v.light_color[2] = 1.0f;
         v.light_intensity = 1.0f;
         v.ambient[0] = v.ambient[1] = v.ambient[2] = 1.0f;
+        v.shadows = true;
+        v.shadow_strength = 0.65f;
+        v.shadow_softness = 1.0f;
+        v.shadow_ground = true;
     }
     ImGui::TextDisabled("灯光随 settings.ini 保存，下次启动沿用。");
 }
