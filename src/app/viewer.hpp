@@ -103,8 +103,13 @@ struct Viewer {
     float shadow_softness = 1.0f;
     bool shadow_ground = true;
 
-    // 接触式肉体变形：自接触凹陷 + 周边隆起，需 CPU 蒙皮。
+    // 接触式肉体变形：自接触凹陷 + 周边隆起。GPU 路径默认开启，
+    // 不可用（着色器编译失败 / 无上下文）时自动回退 CPU 多线程。
     bool flesh = false;
+    bool flesh_gpu = true;
+    // 渲染器反馈：GPU 肉体是否可用 / 本帧是否真的走了 GPU。
+    bool flesh_gpu_available = false;
+    bool flesh_gpu_active = false;
     float flesh_range = 0.012f;
     float flesh_dent = 0.60f;
     float flesh_bulge = 1.0f;

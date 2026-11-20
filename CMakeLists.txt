@@ -109,6 +109,7 @@ if(PMX_BUILD_APP)
 set(PMX_GPU_SOURCES
     src/gpu/gl_api.cpp
     src/gpu/shader.cpp
+    src/gpu/flesh_gpu.cpp
     src/gpu/renderer.cpp
 )
 if(PMX_MODULE_RENDER_OUT)

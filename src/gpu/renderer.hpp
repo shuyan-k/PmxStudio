@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "core/flesh.hpp"
+#include "gpu/flesh_gpu.hpp"
 #include "core/math.hpp"
 #include "core/morph.hpp"
 #include "core/pmx.hpp"
@@ -81,6 +82,8 @@ struct RenderSettings {
     // 接触式肉体变形（第一阶段）：自接触凹陷 + 周边隆起。
     // 启用后蒙皮走 CPU 路径（需要在求解器里访问顶点位置），区域硬度按骨骼权重生效。
     bool flesh = false;
+    // GPU 求解：拓扑打包进 SSBO，每帧不回读 CPU；不可用时自动回退 CPU 多线程。
+    bool flesh_gpu = true;
     float flesh_range = 0.012f;   // 自接触距离（占身高比例）
     float flesh_dent = 0.60f;     // 凹陷深度
     float flesh_bulge = 1.0f;     // 隆起强度
@@ -168,6 +171,10 @@ public:
 
     int gpu_skin_dispatch_count = 0;
     std::string error;
+
+    // 肉体 GPU 路径状态（UI 用来显示提示）。
+    bool flesh_gpu_available() const { return flesh_gpu_.available() && flesh_gpu_.has_model(); }
+    bool flesh_gpu_active() const { return flesh_gpu_active_; }
 
 private:
     // 首次 GPU 蒙皮后与 CPU 参考实现比对（PMX_GPU_CHECK=1 时启用）。
@@ -280,6 +287,9 @@ private:
     std::uint64_t base_hash_ = 0;
     // 自接触求解器：结构变化时 reset，逐帧形变不改变拓扑。
     FleshSolver flesh_solver_;
+    // GPU 求解器：静态拓扑只上传一次，逐帧只提交参数与碰撞体。
+    GpuFleshSolver flesh_gpu_;
+    bool flesh_gpu_active_ = false;
 
     // 烘焙缓存：按整数帧保存蒙皮 + 肉体形变结果，以及该帧的骨骼世界矩阵
     // （用于识别手动改姿态 / 物理回写后缓存是否仍然有效）。

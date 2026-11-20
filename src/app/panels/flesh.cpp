@@ -197,6 +197,13 @@ void panel_flesh(Viewer& v) {
     ImGui::Checkbox("启用肉体接触变形", &v.flesh);
     ImGui::BeginDisabled(!v.flesh);
 
+    ImGui::Checkbox("GPU 求解", &v.flesh_gpu);
+    help("60k 级以上顶点推荐开启：拓扑一次上传，逐帧只在 GPU 求解，无 CPU 回读。");
+    if (!v.flesh_gpu_available)
+        ImGui::TextDisabled("GPU 求解不可用，已回退 CPU 多线程。");
+    else if (v.flesh && v.flesh_gpu && !v.flesh_gpu_active)
+        ImGui::TextDisabled("本帧未走 GPU（烘焙缓存命中或正在回退 CPU）。");
+
     float pct = v.flesh_range * 100.0f;
     if (ImGui::SliderFloat("接触距离", &pct, 0.2f, 8.0f, "%.2f%% 身高"))
         v.flesh_range = pct / 100.0f;
@@ -233,6 +240,6 @@ void panel_flesh(Viewer& v) {
     draw_bake(v);
 
     ImGui::Spacing();
-    ImGui::TextDisabled("启用后蒙皮改走 CPU 路径，超大模型预览可能变慢。");
+    ImGui::TextDisabled("GPU 求解走 GPU 蒙皮；回退 CPU 时蒙皮改走 CPU 路径，超大模型预览可能变慢。");
     ImGui::EndDisabled();
 }

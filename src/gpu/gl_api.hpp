@@ -91,6 +91,8 @@ constexpr GLenum GL_DYNAMIC_DRAW = 0x88E8;
 constexpr GLenum GL_STREAM_DRAW = 0x88E0;
 constexpr GLenum GL_SHADER_STORAGE_BUFFER = 0x90D2;
 constexpr GLenum GL_SHADER_STORAGE_BARRIER_BIT = 0x00002000;
+constexpr GLenum GL_R32UI = 0x8236;
+constexpr GLenum GL_RED_INTEGER = 0x8D94;
 constexpr GLenum GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT = 0x00000001;
 constexpr GLenum GL_MAP_READ_BIT = 0x0001;
 constexpr GLenum GL_MAP_WRITE_BIT = 0x0002;
@@ -152,6 +154,8 @@ constexpr GLenum GL_DRAW_FRAMEBUFFER = 0x8CA9;
     X(void, glBufferSubData, (GLenum, GLintptr, GLsizeiptr, const void*))          \
     X(void, glDeleteBuffers, (GLsizei, const GLuint*))                             \
     X(void, glBindBufferBase, (GLenum, GLuint, GLuint))                            \
+    X(void, glClearBufferData, (GLenum, GLenum, GLenum, GLenum, const void*))      \
+    X(void, glClearBufferSubData, (GLenum, GLenum, GLintptr, GLsizeiptr, GLenum, GLenum, const void*)) \
     X(void*, glMapBufferRange, (GLenum, GLintptr, GLsizeiptr, GLbitfield))         \
     X(GLboolean, glUnmapBuffer, (GLenum))                                          \
     X(void, glGenVertexArrays, (GLsizei, GLuint*))                                 \

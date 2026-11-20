@@ -493,6 +493,8 @@ bool pmxtheme::load_settings(Viewer& v, std::string* err) {
             v.shadow_ground = flag;
         } else if (key == "flesh" && parse_bool(value, flag)) {
             v.flesh = flag;
+        } else if (key == "flesh_gpu" && parse_bool(value, flag)) {
+            v.flesh_gpu = flag;
         } else if (key == "flesh_range" && parse_float(value, number)) {
             v.flesh_range = std::clamp(number, 0.001f, 0.08f);
         } else if (key == "flesh_dent" && parse_float(value, number)) {
@@ -594,6 +596,7 @@ void pmxtheme::save_settings(const Viewer& v) {
         out << "shadow_softness=" << v.shadow_softness << '\n';
         out << "shadow_ground=" << as_bit(v.shadow_ground) << '\n';
         out << "flesh=" << as_bit(v.flesh) << '\n';
+        out << "flesh_gpu=" << as_bit(v.flesh_gpu) << '\n';
         out << "flesh_range=" << v.flesh_range << '\n';
         out << "flesh_dent=" << v.flesh_dent << '\n';
         out << "flesh_bulge=" << v.flesh_bulge << '\n';
