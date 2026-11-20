@@ -106,6 +106,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      # 发布说明随仓库提供（docs/releases/<tag>.md），需要先检出。
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: PmxStudio-windows-x64
@@ -118,8 +121,13 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
+          notes="docs/releases/${tag}.md"
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --title "PmxStudio $tag" --generate-notes --verify-tag
+            if [ -f "$notes" ]; then
+              gh release create "$tag" --title "PmxStudio $tag" --notes-file "$notes" --verify-tag
+            else
+              gh release create "$tag" --title "PmxStudio $tag" --generate-notes --verify-tag
+            fi
           fi
           gh release upload "$tag" \
             release/PmxStudio.exe \
