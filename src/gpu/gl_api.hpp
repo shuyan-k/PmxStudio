@@ -104,7 +104,13 @@ constexpr GLenum GL_MULTISAMPLE = 0x809D;
 constexpr GLenum GL_DEPTH_CLAMP = 0x864F;
 constexpr GLenum GL_FRAMEBUFFER = 0x8D40;
 constexpr GLenum GL_COLOR_ATTACHMENT0 = 0x8CE0;
+constexpr GLenum GL_DEPTH_ATTACHMENT = 0x8D00;
 constexpr GLenum GL_DEPTH_STENCIL_ATTACHMENT = 0x821A;
+constexpr GLenum GL_DEPTH_COMPONENT = 0x1902;
+constexpr GLenum GL_DEPTH_COMPONENT24 = 0x81A6;
+constexpr GLenum GL_NONE = 0;
+constexpr GLenum GL_DRAW_BUFFER = 0x0C01;
+constexpr GLenum GL_DRAW_FRAMEBUFFER_BINDING = 0x8CA6;
 constexpr GLenum GL_RENDERBUFFER = 0x8D41;
 constexpr GLenum GL_DEPTH24_STENCIL8 = 0x88F0;
 constexpr GLenum GL_FRAMEBUFFER_COMPLETE = 0x8CD5;
@@ -116,6 +122,8 @@ constexpr GLenum GL_DRAW_FRAMEBUFFER = 0x8CA9;
     X(void, glClearColor, (GLfloat, GLfloat, GLfloat, GLfloat))                    \
     X(void, glClear, (GLbitfield))                                                 \
     X(void, glViewport, (GLint, GLint, GLsizei, GLsizei))                          \
+    X(void, glGetIntegerv, (GLenum, GLint*))                                       \
+    X(void, glDrawBuffer, (GLenum))                                                \
     X(void, glEnable, (GLenum))                                                    \
     X(void, glDisable, (GLenum))                                                   \
     X(void, glDepthMask, (GLboolean))                                              \

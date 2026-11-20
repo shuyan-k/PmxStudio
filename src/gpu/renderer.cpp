@@ -460,6 +460,21 @@ float point_segment_distance(float px, float py, float ax, float ay, float bx, f
     return std::hypot(px - (ax + dx * t), py - (ay + dy * t));
 }
 
+// 光源视图矩阵：与相机相同的右手 look-at 约定，供阴影 pass 使用。
+Mat4 light_look_at(Vec3 eye, Vec3 center, Vec3 up) {
+    const Vec3 f = normalize(center - eye);
+    Vec3 s = cross(f, up);
+    if (length(s) < 1e-6f) s = cross(f, Vec3{0.0f, 0.0f, 1.0f});
+    s = normalize(s);
+    const Vec3 u = cross(s, f);
+    Mat4 m;
+    m.at(0, 0) = s.x; m.at(0, 1) = s.y; m.at(0, 2) = s.z; m.at(0, 3) = -dot(s, eye);
+    m.at(1, 0) = u.x; m.at(1, 1) = u.y; m.at(1, 2) = u.z; m.at(1, 3) = -dot(u, eye);
+    m.at(2, 0) = -f.x; m.at(2, 1) = -f.y; m.at(2, 2) = -f.z; m.at(2, 3) = dot(f, eye);
+    m.at(3, 3) = 1.0f;
+    return m;
+}
+
 }  // namespace
 
 SceneRenderer::~SceneRenderer() {
@@ -494,6 +509,22 @@ SceneRenderer::~SceneRenderer() {
         if (ramp) glDeleteTextures(1, &ramp);
         ramp = 0;
     }
+    if (ground_vbo_) {
+        glDeleteBuffers(1, &ground_vbo_);
+        ground_vbo_ = 0;
+    }
+    if (ground_vao_) {
+        glDeleteVertexArrays(1, &ground_vao_);
+        ground_vao_ = 0;
+    }
+    if (shadow_fbo_) {
+        glDeleteFramebuffers(1, &shadow_fbo_);
+        shadow_fbo_ = 0;
+    }
+    if (shadow_tex_) {
+        glDeleteTextures(1, &shadow_tex_);
+        shadow_tex_ = 0;
+    }
 }
 
 bool SceneRenderer::init(std::string* error) {
@@ -506,7 +537,13 @@ bool SceneRenderer::init(std::string* error) {
         !outline_program_.build(kOutlineVS, kOutlineFS, &err) ||
         !solid_program_.build(kSolidVS, kSolidFS, &err) ||
         !inst_program_.build(kInstVS, kSolidFS, &err) ||
-        !line_program_.build(kLineVS, kLineFS, &err)) {
+        !line_program_.build(kLineVS, kLineFS, &err) ||
+        !shadow_program_.build(kMeshVS, toon::shadow_fragment_source, &err) ||
+        !ground_program_.build(toon::ground_vertex_source, toon::ground_fragment_source, &err)) {
+        if (error) *error = err;
+        return false;
+    }
+    if (!build_shadow_map(&err)) {
         if (error) *error = err;
         return false;
     }
@@ -515,6 +552,7 @@ bool SceneRenderer::init(std::string* error) {
     build_templates();
     build_toon_ramps();
     build_grid(RenderSettings{});
+    build_ground();
     ready_ = true;
     return true;
 }
@@ -877,6 +915,148 @@ void SceneRenderer::build_toon_ramps() {
     glBindTexture(glc::GL_TEXTURE_2D, 0);
 }
 
+bool SceneRenderer::build_shadow_map(std::string* error) {
+    glGenTextures(1, &shadow_tex_);
+    glBindTexture(glc::GL_TEXTURE_2D, shadow_tex_);
+    glTexImage2D(glc::GL_TEXTURE_2D, 0, glc::GL_DEPTH_COMPONENT24, shadow_size_,
+                 shadow_size_, 0, glc::GL_DEPTH_COMPONENT, glc::GL_FLOAT, nullptr);
+    glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_MIN_FILTER,
+                    static_cast<GLint>(glc::GL_NEAREST));
+    glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_MAG_FILTER,
+                    static_cast<GLint>(glc::GL_NEAREST));
+    glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_WRAP_S,
+                    static_cast<GLint>(glc::GL_CLAMP_TO_EDGE));
+    glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_WRAP_T,
+                    static_cast<GLint>(glc::GL_CLAMP_TO_EDGE));
+    glBindTexture(glc::GL_TEXTURE_2D, 0);
+
+    glGenFramebuffers(1, &shadow_fbo_);
+    glBindFramebuffer(glc::GL_FRAMEBUFFER, shadow_fbo_);
+    glFramebufferTexture2D(glc::GL_FRAMEBUFFER, glc::GL_DEPTH_ATTACHMENT,
+                           glc::GL_TEXTURE_2D, shadow_tex_, 0);
+    // 只有深度附件：显式关闭颜色读写，保证 core profile 下 FBO 完整。
+    glDrawBuffer(glc::GL_NONE);
+    glReadBuffer(glc::GL_NONE);
+    const GLenum status = glCheckFramebufferStatus(glc::GL_FRAMEBUFFER);
+    glBindFramebuffer(glc::GL_FRAMEBUFFER, 0);
+    if (status != glc::GL_FRAMEBUFFER_COMPLETE) {
+        if (error) *error = "阴影贴图 FBO 创建失败";
+        return false;
+    }
+    shadow_texel_ = 1.0f / static_cast<float>(shadow_size_);
+    return true;
+}
+
+void SceneRenderer::build_ground() {
+    // 与地面网格同尺寸的接影平面；不写深度，未遮挡处 discard，因此不影响现有画面。
+    const float e = 40.0f;
+    const float verts[] = {-e, 0.0f, -e, e, 0.0f, -e, -e, 0.0f, e, e, 0.0f, e};
+    glGenVertexArrays(1, &ground_vao_);
+    glBindVertexArray(ground_vao_);
+    glGenBuffers(1, &ground_vbo_);
+    glBindBuffer(glc::GL_ARRAY_BUFFER, ground_vbo_);
+    glBufferData(glc::GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(sizeof verts), verts,
+                 glc::GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, glc::GL_FLOAT, glc::GL_FALSE, 3 * sizeof(float), nullptr);
+    glBindVertexArray(0);
+}
+
+void SceneRenderer::update_light_matrix(const RenderSettings& settings) {
+    Vec3 dir = settings.light_dir;
+    if (length(dir) < 1e-6f) dir = Vec3{0.35f, 0.85f, 0.45f};
+    dir = normalize(dir);
+    // 正交框覆盖模型包围球；沿光线方向后退两倍半径，近远裁剪面把整个球包住。
+    const float r = scene_radius_ * 1.2f + 0.5f;
+    const float dist = r * 2.0f + 1.0f;
+    const Vec3 eye = scene_center_ + dir * dist;
+    const Vec3 up = std::fabs(dir.y) > 0.99f ? Vec3{0.0f, 0.0f, 1.0f}
+                                             : Vec3{0.0f, 1.0f, 0.0f};
+    const Mat4 view = light_look_at(eye, scene_center_, up);
+    const Mat4 proj = orthographic(-r, r, -r, r, 0.05f, dist + r * 2.0f + 1.0f);
+    light_view_proj_ = mul(proj, view);
+    // 一个阴影纹素在世界空间的大小；片元着色器用它做法线偏移（约 2 个纹素）。
+    shadow_bias_ = 2.0f * r / static_cast<float>(shadow_size_) * 2.0f;
+}
+
+void SceneRenderer::draw_shadow_map(const Model& model, const RenderSettings& settings) {
+    glBindFramebuffer(glc::GL_FRAMEBUFFER, shadow_fbo_);
+    glViewport(0, 0, shadow_size_, shadow_size_);
+    glClear(glc::GL_DEPTH_BUFFER_BIT);
+    glEnable(glc::GL_DEPTH_TEST);
+    glDepthFunc(glc::GL_LESS);
+    glDepthMask(glc::GL_TRUE);
+    glDisable(glc::GL_BLEND);
+    // 双面投影：MMD 模型大量使用单面材质（裙摆、衣领），开背面剔除会漏光。
+    glDisable(glc::GL_CULL_FACE);
+    glPolygonMode(glc::GL_FRONT_AND_BACK, glc::GL_FILL);
+
+    shadow_program_.use();
+    shadow_program_.set_mat4("uMVP", light_view_proj_);
+    shadow_program_.set1f("uExpand", 0.0f);
+    shadow_program_.set1i("uTex", 0);
+    glBindVertexArray(model_.vao);
+    glBindBuffer(glc::GL_ELEMENT_ARRAY_BUFFER, model_.ebo);
+    glBindBufferBase(glc::GL_SHADER_STORAGE_BUFFER, kBindingVerts, model_.vbo);
+    glBindBufferBase(glc::GL_SHADER_STORAGE_BUFFER, kBindingPos, model_.out_pos_ssbo);
+    glBindBufferBase(glc::GL_SHADER_STORAGE_BUFFER, kBindingNrm, model_.out_nrm_ssbo);
+
+    int first = 0;
+    for (const Material& mt : model.materials) {
+        const int count = mt.face_count;
+        if (count <= 0) continue;
+        // 隐藏的 alpha=0 层不应参与投影，否则会多出一块不该存在的影子。
+        if (!settings.preview_alpha && mt.diffuse.w < 0.001f) {
+            first += count;
+            continue;
+        }
+        bool use_tex = false;
+        if (mt.texture >= 0) {
+            const Texture& tex = texture_for(model, mt.texture);
+            if (tex.id) {
+                glBindTexture(glc::GL_TEXTURE_2D, tex.id);
+                use_tex = true;
+            }
+        }
+        shadow_program_.set1i("uUseTex", use_tex ? 1 : 0);
+        glDrawElements(glc::GL_TRIANGLES, count, glc::GL_UNSIGNED_INT,
+                       reinterpret_cast<const void*>(static_cast<std::size_t>(first) *
+                                                     sizeof(std::uint32_t)));
+        first += count;
+    }
+    glBindVertexArray(0);
+    glBindTexture(glc::GL_TEXTURE_2D, 0);
+}
+
+void SceneRenderer::draw_ground_shadow(const RenderSettings& settings, const Mat4& vp) {
+    glEnable(glc::GL_BLEND);
+    glBlendFunc(glc::GL_SRC_ALPHA, glc::GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(glc::GL_FALSE);
+    glDisable(glc::GL_CULL_FACE);
+
+    ground_program_.use();
+    ground_program_.set_mat4("uMVP", vp);
+    ground_program_.set_mat4("uLightVP", light_view_proj_);
+    ground_program_.set1f("uShadowStrength", settings.shadow_strength);
+    ground_program_.set1f("uShadowSoftness", settings.shadow_softness);
+    ground_program_.set1f("uShadowTexel", shadow_texel_);
+    // 阴影用背景色的深色版本，而不是纯黑：在亮色主题下更像柔和的地面投影。
+    const Vec3 shadow_tint = effective_background(settings) * 0.28f;
+    ground_program_.set3f("uShadowColor", shadow_tint.x, shadow_tint.y, shadow_tint.z);
+    glActiveTexture(glc::GL_TEXTURE0 + 3);
+    glBindTexture(glc::GL_TEXTURE_2D, shadow_tex_);
+    ground_program_.set1i("uShadowMap", 3);
+
+    glBindVertexArray(ground_vao_);
+    glDrawArrays(glc::GL_TRIANGLE_STRIP, 0, 4);
+    glBindVertexArray(0);
+
+    glDepthMask(glc::GL_TRUE);
+    glDisable(glc::GL_BLEND);
+    glActiveTexture(glc::GL_TEXTURE0);
+    glBindTexture(glc::GL_TEXTURE_2D, 0);
+}
+
 void SceneRenderer::release_model() {
     GLuint buffers[] = {model_.vbo, model_.ebo, model_.bone_ssbo, model_.rest_ssbo,
                         model_.out_pos_ssbo, model_.out_nrm_ssbo};
@@ -903,6 +1083,17 @@ bool SceneRenderer::upload_model(const Model& model, std::string* error) {
         if (error) *error = "模型没有顶点";
         return false;
     }
+    // 阴影正交投影需要覆盖整个模型：记录静止姿态的包围球，供每帧更新光源矩阵。
+    Vec3 lo = model.vertices.pos[0];
+    Vec3 hi = lo;
+    for (const Vec3& p : model.vertices.pos) {
+        lo.x = std::min(lo.x, p.x); lo.y = std::min(lo.y, p.y); lo.z = std::min(lo.z, p.z);
+        hi.x = std::max(hi.x, p.x); hi.y = std::max(hi.y, p.y); hi.z = std::max(hi.z, p.z);
+    }
+    scene_center_ = (lo + hi) * 0.5f;
+    float radius = 0.0f;
+    for (const Vec3& p : model.vertices.pos) radius = std::max(radius, length(p - scene_center_));
+    scene_radius_ = std::max(radius, 1.0f);
     std::vector<float> data(static_cast<std::size_t>(nv) * kFloatsPerVertex, 0.0f);
     for (int i = 0; i < nv; ++i) {
         const std::size_t o = static_cast<std::size_t>(i) * kFloatsPerVertex;
@@ -1474,6 +1665,10 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
     const Vec3 eye_neg = mul(transpose(upper3(view)), view_t);
     const Vec3 eye{-eye_neg.x, -eye_neg.y, -eye_neg.z};
 
+    // 阴影 pass 会临时绑定自己的 FBO，结束后必须切回调用者的目标（窗口或离屏）。
+    GLint target_fbo = 0;
+    glGetIntegerv(glc::GL_DRAW_FRAMEBUFFER_BINDING, &target_fbo);
+
     glViewport(0, 0, width, height);
     const Vec3 clear_color = effective_background(settings);
     glClearColor(clear_color.x, clear_color.y, clear_color.z, 1.0f);
@@ -1490,6 +1685,32 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
     glDisable(glc::GL_BLEND);
     glPolygonMode(glc::GL_FRONT_AND_BACK, settings.wireframe ? glc::GL_LINE : glc::GL_FILL);
 
+    // ---- 蒙皮：GPU 计算着色器写 outPos/outNrm，CPU 路径则直接上传
+    // 必须先于阴影 pass：阴影深度图读取的是蒙皮后的位置。
+    upload_skin_matrices(model, pose);
+    if (settings.use_gpu_skinning) dispatch_gpu_skin();
+    else upload_cpu_skin(model, pose);
+    if (settings.use_gpu_skinning && gpu_check_enabled_ && !gpu_checked_) {
+        validate_gpu_skin(model, pose);
+        gpu_checked_ = true;
+    }
+
+    // ---- 方向光阴影：先渲染深度图，再切回主目标绘制接收阴影的几何。
+    const bool shadows_on = settings.shadows && settings.show_mesh && shadow_fbo_ != 0;
+    if (shadows_on) {
+        update_light_matrix(settings);
+        draw_shadow_map(model, settings);
+        glBindFramebuffer(glc::GL_FRAMEBUFFER, static_cast<GLuint>(target_fbo));
+        glViewport(0, 0, width, height);
+        glEnable(glc::GL_DEPTH_TEST);
+        glDepthFunc(glc::GL_LEQUAL);
+        glDepthMask(glc::GL_TRUE);
+        glPolygonMode(glc::GL_FRONT_AND_BACK, settings.wireframe ? glc::GL_LINE : glc::GL_FILL);
+        glDisable(glc::GL_CULL_FACE);
+        glDisable(glc::GL_BLEND);
+        if (settings.shadow_ground) draw_ground_shadow(settings, vp);
+    }
+
     // ---- 网格地面
     if (settings.grid) {
         ensure_grid(settings);
@@ -1499,15 +1720,6 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
         glBindVertexArray(grid_vao_);
         glDrawArrays(glc::GL_LINES, 0, static_cast<GLsizei>(grid_vertex_count_));
         glBindVertexArray(0);
-    }
-
-    // ---- 蒙皮：GPU 计算着色器写 outPos/outNrm，CPU 路径则直接上传
-    upload_skin_matrices(model, pose);
-    if (settings.use_gpu_skinning) dispatch_gpu_skin();
-    else upload_cpu_skin(model, pose);
-    if (settings.use_gpu_skinning && gpu_check_enabled_ && !gpu_checked_) {
-        validate_gpu_skin(model, pose);
-        gpu_checked_ = true;
     }
 
     // ---- 主网格
@@ -1536,6 +1748,16 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
         mesh_program_.set3f("uLightColor", settings.light_color);
         mesh_program_.set1f("uLightIntensity", settings.light_intensity);
         mesh_program_.set3f("uSceneAmbient", settings.ambient_color);
+        mesh_program_.set1i("uShadows", shadows_on ? 1 : 0);
+        mesh_program_.set_mat4("uLightVP", light_view_proj_);
+        mesh_program_.set1f("uShadowStrength", settings.shadow_strength);
+        mesh_program_.set1f("uShadowSoftness", settings.shadow_softness);
+        mesh_program_.set1f("uShadowTexel", shadow_texel_);
+        mesh_program_.set1f("uShadowBias", shadow_bias_);
+        glActiveTexture(glc::GL_TEXTURE0 + 3);
+        glBindTexture(glc::GL_TEXTURE_2D, shadow_tex_);
+        mesh_program_.set1i("uShadowMap", 3);
+        glActiveTexture(glc::GL_TEXTURE0);
         for (std::size_t r = 0; r < model_.ranges.size(); ++r) {
             const int mi = model_.ranges[r].material;
             float a = mi >= 0 ? model.materials[static_cast<std::size_t>(mi)].diffuse.w : 1.0f;

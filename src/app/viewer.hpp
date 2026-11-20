@@ -97,6 +97,11 @@ struct Viewer {
     float light_intensity = 1.0f;
     float ambient[3] = {1.0f, 1.0f, 1.0f};
     bool show_light = true;
+    // 方向光阴影：深度贴图 + 3×3 PCF，地面用 shadow catcher 接收投影。
+    bool shadows = true;
+    float shadow_strength = 0.65f;
+    float shadow_softness = 1.0f;
+    bool shadow_ground = true;
 
     // VMD 模型动作（骨骼 / 形态 / IK）：导入后按 30 fps 时间轴播放；暂停时保留当前帧姿态。
     // 同一文件里的相机帧不放在这里，导入时拆进 camera_motion。

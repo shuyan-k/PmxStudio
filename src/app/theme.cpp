@@ -459,6 +459,14 @@ bool pmxtheme::load_settings(Viewer& v, std::string* err) {
             v.light_intensity = std::clamp(number, 0.0f, 3.0f);
         } else if (key == "show_light" && parse_bool(value, flag)) {
             v.show_light = flag;
+        } else if (key == "shadows" && parse_bool(value, flag)) {
+            v.shadows = flag;
+        } else if (key == "shadow_strength" && parse_float(value, number)) {
+            v.shadow_strength = std::clamp(number, 0.0f, 1.0f);
+        } else if (key == "shadow_softness" && parse_float(value, number)) {
+            v.shadow_softness = std::clamp(number, 0.5f, 3.0f);
+        } else if (key == "shadow_ground" && parse_bool(value, flag)) {
+            v.shadow_ground = flag;
         } else if (key == "cam_fov" && parse_float(value, number)) {
             v.camera.fov = std::clamp(number, 5.0f, 120.0f);
         } else if (key == "cam_ortho" && parse_bool(value, flag)) {
@@ -529,6 +537,10 @@ void pmxtheme::save_settings(const Viewer& v) {
         out << "ambient_color=" << v.ambient[0] << ',' << v.ambient[1] << ',' << v.ambient[2]
             << '\n';
         out << "show_light=" << as_bit(v.show_light) << '\n';
+        out << "shadows=" << as_bit(v.shadows) << '\n';
+        out << "shadow_strength=" << v.shadow_strength << '\n';
+        out << "shadow_softness=" << v.shadow_softness << '\n';
+        out << "shadow_ground=" << as_bit(v.shadow_ground) << '\n';
         out << "cam_fov=" << v.camera.fov << '\n';
         out << "cam_ortho=" << as_bit(v.camera.ortho) << '\n';
         out << "cam_ortho_scale=" << v.camera.ortho_scale << '\n';

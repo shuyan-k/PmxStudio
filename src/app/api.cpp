@@ -435,6 +435,10 @@ JsonValue settings_json(const Viewer& viewer) {
     pmx::json_set(out, "ambient_color",
                   vec3_json({viewer.ambient[0], viewer.ambient[1], viewer.ambient[2]}));
     pmx::json_set(out, "show_light", pmx::json_bool(viewer.show_light));
+    pmx::json_set(out, "shadows", pmx::json_bool(viewer.shadows));
+    pmx::json_set(out, "shadow_strength", pmx::json_number(viewer.shadow_strength));
+    pmx::json_set(out, "shadow_softness", pmx::json_number(viewer.shadow_softness));
+    pmx::json_set(out, "shadow_ground", pmx::json_bool(viewer.shadow_ground));
     pmx::json_set(out, "camera_gizmo", pmx::json_bool(viewer.camera_gizmo));
     pmx::json_set(out, "ground", pmx::json_bool(viewer.ground));
     pmx::json_set(out, "physics_enabled", pmx::json_bool(viewer.physics_enabled));
@@ -520,6 +524,17 @@ void apply_settings(Viewer& viewer, const JsonValue& params) {
     set_vec3("light_dir", viewer.light);
     set_vec3("light_color", viewer.light_color);
     set_vec3("ambient_color", viewer.ambient);
+    if (has(params, "shadows")) viewer.shadows = optional_bool(params, "shadows", viewer.shadows);
+    if (has(params, "shadow_strength"))
+        viewer.shadow_strength =
+            std::clamp(optional_float(params, "shadow_strength", viewer.shadow_strength), 0.0f,
+                       1.0f);
+    if (has(params, "shadow_softness"))
+        viewer.shadow_softness =
+            std::clamp(optional_float(params, "shadow_softness", viewer.shadow_softness), 0.5f,
+                       3.0f);
+    if (has(params, "shadow_ground"))
+        viewer.shadow_ground = optional_bool(params, "shadow_ground", viewer.shadow_ground);
 
     if (has(params, "bg_follow_theme")) {
         viewer.bg_custom = !optional_bool(params, "bg_follow_theme", !viewer.bg_custom);
@@ -581,6 +596,10 @@ pmx::RenderSettings render_settings(const Viewer& viewer, bool overlays) {
     settings.light_intensity = viewer.light_intensity;
     settings.ambient_color = {viewer.ambient[0], viewer.ambient[1], viewer.ambient[2]};
     settings.show_light = overlays && viewer.show_light;
+    settings.shadows = viewer.shadows;
+    settings.shadow_strength = viewer.shadow_strength;
+    settings.shadow_softness = viewer.shadow_softness;
+    settings.shadow_ground = viewer.shadow_ground;
     settings.show_camera = false;
     return settings;
 }

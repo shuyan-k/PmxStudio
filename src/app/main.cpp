@@ -1145,6 +1145,10 @@ void Viewer::draw_scene(int fb_w, int fb_h) {
     settings.light_intensity = light_intensity;
     settings.ambient_color = {ambient[0], ambient[1], ambient[2]};
     settings.show_light = show_light;
+    settings.shadows = shadows;
+    settings.shadow_strength = shadow_strength;
+    settings.shadow_softness = shadow_softness;
+    settings.shadow_ground = shadow_ground;
 
     // 场景相机 gizmo：有相机动作就显示机位线框；从相机视角取景时不画自己。
     settings.show_camera = false;
