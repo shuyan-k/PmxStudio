@@ -507,7 +507,16 @@ void Viewer::rebuild_runtime(bool geometry, bool skeleton, bool physics_rebuild)
     // 骨骼增删后附件的锚点索引不再可靠，直接移除附件。
     if (skeleton && accessory_loaded) {
         accessory = pmx::Model{};
-        render_model = pmx::Model{};
+        accessory_base = pmx::Model{};
+        accessory_pose.reset();
+        accessory_skin.reset();
+#ifdef PMX_ENABLE_PHYSICS
+        accessory_physics.reset();
+#endif
+        accessory_skin_pos.clear();
+        accessory_skin_nrm.clear();
+        accessory_reset = false;
+        accessory_physics_active = false;
         accessory_path.clear();
         accessory_loaded = false;
         accessory_bone = -1;

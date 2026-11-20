@@ -15,6 +15,7 @@
 #include "core/morph.hpp"
 #include "core/pmx.hpp"
 #include "core/pose.hpp"
+#include "core/skinning.hpp"
 #include "core/vmd.hpp"
 #include "gpu/renderer.hpp"
 #ifdef PMX_ENABLE_PHYSICS
@@ -59,9 +60,11 @@ struct Viewer {
     // ---------------------------------------------------------- 附件模型
     // 单独加载的 PMX（如头部挂饰）：几何合并进渲染用的 render_model，
     // 全部顶点 100% 绑定到主模型的一个骨骼上跟随运动；
+    // 附件自己的骨骼/物理在独立运行时里演算后再写回渲染顶点，
     // 不参与编辑、拾取与保存，随主模型重新加载而清空。
-    pmx::Model accessory;
-    pmx::Model render_model;  // 仅在加载附件时使用
+    pmx::Model accessory;       // 运行时副本（已按 accessory_scale 缩放）
+    pmx::Model accessory_base;  // 加载进来的原始模型
+    pmx::Model render_model;    // 主模型 + 附件几何（仅加载附件时使用）
     std::string accessory_path;
     bool accessory_loaded = false;
     int accessory_bone = -1;                  // 锚点骨骼（主模型）
@@ -69,6 +72,15 @@ struct Viewer {
     float accessory_rot[3] = {0.0f, 0.0f, 0.0f};  // 欧拉角，角度制
     float accessory_scale = 1.0f;
     std::size_t accessory_vertex_base = 0;    // 附件顶点在 render_model 中的起点
+    std::unique_ptr<pmx::Pose> accessory_pose;
+    std::unique_ptr<pmx::SkinDeformer> accessory_skin;
+#ifdef PMX_ENABLE_PHYSICS
+    std::unique_ptr<pmx::Physics> accessory_physics;
+#endif
+    bool accessory_reset = false;          // 下一帧把附件物理摆到当前姿态
+    bool accessory_physics_active = false;  // 本帧附件是否参与了物理演算
+    std::vector<pmx::Vec3> accessory_skin_pos;
+    std::vector<pmx::Vec3> accessory_skin_nrm;
 
     // 渲染器实际使用的模型：有附件时是合并模型，否则就是主模型。
     const pmx::Model& active_model() const { return accessory_loaded ? render_model : model; }
@@ -76,6 +88,10 @@ struct Viewer {
     void clear_accessory();
     // 用主模型 + 变换后的附件重建渲染模型（结构变化时调用，不上传 GPU）。
     void rebuild_render_model();
+    // 按 accessory_scale 重建附件副本与运行时（骨骼 / 蒙皮 / 物理）。
+    void rebuild_accessory_scaled();
+    // 每帧在主姿态求值后更新附件：自带骨骼 + 物理 → 蒙皮 → 只回传附件段。
+    void update_accessory_frame(float dt);
     // 拖动变换时只更新附件段顶点并局部回传，避免整模型重建 / 贴图重载。
     void update_accessory_transform();
     // 重建后重新上传，用于加载 / 移除附件、切换锚点骨骼。

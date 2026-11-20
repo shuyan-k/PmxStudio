@@ -758,9 +758,40 @@ JsonValue accessory_json(const Viewer& viewer) {
                    ? viewer.model.bones[static_cast<std::size_t>(bone)].name
                    : "");
     pmx::json_set(out, "vertices",
-                  pmx::json_number(static_cast<double>(viewer.accessory.vertices.size())));
+                  pmx::json_number(static_cast<double>(viewer.accessory.vertices.pos.size())));
     pmx::json_set(out, "materials",
                   pmx::json_number(static_cast<double>(viewer.accessory.materials.size())));
+    pmx::json_set(out, "bones",
+                  pmx::json_number(static_cast<double>(viewer.accessory.bones.size())));
+    pmx::json_set(out, "rigid",
+                  pmx::json_number(static_cast<double>(viewer.accessory.rigid.size())));
+    pmx::json_set(out, "joints",
+                  pmx::json_number(static_cast<double>(viewer.accessory.joints.size())));
+    pmx::json_set(out, "physics", pmx::json_bool(viewer.accessory_physics_active));
+    // 附件自带骨骼的世界位置（含锚点与物理结果），便于自动化校验挂饰摆动。
+    JsonValue bone_world = pmx::json_array();
+    if (viewer.accessory_pose) {
+        for (const pmx::Mat4& w : viewer.accessory_pose->world()) {
+            pmx::json_push(bone_world,
+                           pmx::json_number(static_cast<double>(w.at(0, 3))));
+            pmx::json_push(bone_world,
+                           pmx::json_number(static_cast<double>(w.at(1, 3))));
+            pmx::json_push(bone_world,
+                           pmx::json_number(static_cast<double>(w.at(2, 3))));
+        }
+    }
+    pmx::json_set(out, "bone_world", bone_world);
+    // 附件骨骼的局部旋转（四元数），用于确认物理是否驱动了垂饰。
+    JsonValue bone_rot = pmx::json_array();
+    if (viewer.accessory_pose) {
+        for (const pmx::Quat& q : viewer.accessory_pose->rot) {
+            pmx::json_push(bone_rot, pmx::json_number(static_cast<double>(q.x)));
+            pmx::json_push(bone_rot, pmx::json_number(static_cast<double>(q.y)));
+            pmx::json_push(bone_rot, pmx::json_number(static_cast<double>(q.z)));
+            pmx::json_push(bone_rot, pmx::json_number(static_cast<double>(q.w)));
+        }
+    }
+    pmx::json_set(out, "bone_rot", bone_rot);
     pmx::json_set(out, "pos",
                   vec3_json({viewer.accessory_pos[0], viewer.accessory_pos[1],
                              viewer.accessory_pos[2]}));
@@ -775,6 +806,7 @@ JsonValue accessory_json(const Viewer& viewer) {
 void apply_accessory_params(Viewer& viewer, const JsonValue& params) {
     bool structure = false;
     bool transform = false;
+    bool scale_changed = false;
     if (const JsonValue* bone = params.find("bone")) {
         int index = -1;
         if (bone->is_string()) {
@@ -815,9 +847,13 @@ void apply_accessory_params(Viewer& viewer, const JsonValue& params) {
     if (const JsonValue* scale = params.find("scale")) {
         if (!scale->is_number() || !(scale->number > 0.0))
             throw ApiError{"参数 \"scale\" 必须是正数"};
-        viewer.accessory_scale = static_cast<float>(scale->number);
+        const float s = static_cast<float>(scale->number);
+        scale_changed = std::fabs(s - viewer.accessory_scale) > 1e-6f;
+        viewer.accessory_scale = s;
         transform = true;
     }
+    // 缩放要烘焙进附件几何/骨骼/刚体，必须重建运行时。
+    if (scale_changed) viewer.rebuild_accessory_scaled();
     if (structure) viewer.apply_accessory_structure();
     else if (transform) viewer.update_accessory_transform();
 }
@@ -969,6 +1005,8 @@ JsonValue cmd_scene_render(Viewer& viewer, const JsonValue& params) {
     else viewer.pose->apply(&viewer.morph_weights);
     if (viewer.preview_mode) viewer.pose->solve_ik();
     viewer.pose->world();
+    // 单帧渲染也刷新附件（dt=0 不推进物理，只保证骨骼姿态与网格一致）。
+    viewer.update_accessory_frame(0.0f);
 
     pmx::OffscreenTarget target;
     std::string error;

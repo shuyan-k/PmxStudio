@@ -149,8 +149,18 @@ bool Viewer::load_model(const std::string& path, std::string* err) {
         return false;
     }
     pose = std::make_unique<pmx::Pose>(model);
-    // 换模型后附件的锚点骨骼索引失效，直接清掉。
+    // 换模型后附件的锚点骨骼索引失效，直接清掉（含自带骨骼 / 物理运行时）。
     accessory = pmx::Model{};
+    accessory_base = pmx::Model{};
+    accessory_pose.reset();
+    accessory_skin.reset();
+#ifdef PMX_ENABLE_PHYSICS
+    accessory_physics.reset();
+#endif
+    accessory_skin_pos.clear();
+    accessory_skin_nrm.clear();
+    accessory_reset = false;
+    accessory_physics_active = false;
     render_model = pmx::Model{};
     accessory_path.clear();
     accessory_loaded = false;
@@ -253,6 +263,7 @@ bool Viewer::bake_flesh_frame(int frame, std::string* err) {
 
 void Viewer::reset_physics() {
 #ifdef PMX_ENABLE_PHYSICS
+    accessory_reset = true;  // 附件物理跟着重置，重新摆到当前姿态
     if (!physics_ptr) return;
     physics.gravity = gravity;
     physics.iterations = iterations;
@@ -270,6 +281,7 @@ void Viewer::settle_physics() {
 #ifdef PMX_ENABLE_PHYSICS
     if (!physics_ptr || !physics_enabled) return;
     physics.clear_velocities();
+    if (accessory_physics) accessory_physics->clear_velocities();
 #endif
 }
 
@@ -1963,6 +1975,10 @@ static int run_viewer(const std::vector<std::string>& args) {
 #endif
             }
             viewer.pose->world();
+            // 附件自带骨骼/物理在主姿态之后求值，并把蒙皮结果写回附件段顶点。
+            // 与主物理一致：跳帧时仍按当前帧间隔推进，只是不追之前的累积时间。
+            if (!viewer.export_job.active)
+                viewer.update_accessory_frame(physics_dt);
         }
 
         {
