@@ -440,6 +440,9 @@ JsonValue settings_json(const Viewer& viewer) {
     pmx::json_set(out, "shadow_softness", pmx::json_number(viewer.shadow_softness));
     pmx::json_set(out, "shadow_ground", pmx::json_bool(viewer.shadow_ground));
     pmx::json_set(out, "flesh", pmx::json_bool(viewer.flesh));
+    pmx::json_set(out, "flesh_gpu", pmx::json_bool(viewer.flesh_gpu));
+    pmx::json_set(out, "flesh_gpu_available", pmx::json_bool(viewer.flesh_gpu_available));
+    pmx::json_set(out, "flesh_gpu_active", pmx::json_bool(viewer.flesh_gpu_active));
     pmx::json_set(out, "flesh_range", pmx::json_number(viewer.flesh_range));
     pmx::json_set(out, "flesh_dent", pmx::json_number(viewer.flesh_dent));
     pmx::json_set(out, "flesh_bulge", pmx::json_number(viewer.flesh_bulge));
@@ -570,6 +573,7 @@ void apply_settings(Viewer& viewer, const JsonValue& params) {
     if (has(params, "shadow_ground"))
         viewer.shadow_ground = optional_bool(params, "shadow_ground", viewer.shadow_ground);
     set_bool("flesh", viewer.flesh);
+    set_bool("flesh_gpu", viewer.flesh_gpu);
     if (has(params, "flesh_range"))
         viewer.flesh_range =
             std::clamp(optional_float(params, "flesh_range", viewer.flesh_range), 0.001f, 0.08f);
@@ -705,6 +709,7 @@ pmx::RenderSettings render_settings(const Viewer& viewer, bool overlays) {
     {
         const pmx::RenderSettings flesh = viewer.flesh_render_settings();
         settings.flesh = flesh.flesh;
+        settings.flesh_gpu = flesh.flesh_gpu;
         settings.flesh_range = flesh.flesh_range;
         settings.flesh_dent = flesh.flesh_dent;
         settings.flesh_bulge = flesh.flesh_bulge;

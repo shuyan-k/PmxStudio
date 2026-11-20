@@ -201,6 +201,7 @@ void Viewer::apply_morphs() {
 pmx::RenderSettings Viewer::flesh_render_settings() const {
     pmx::RenderSettings s;
     s.flesh = flesh;
+    s.flesh_gpu = flesh_gpu;
     s.flesh_range = flesh_range;
     s.flesh_dent = flesh_dent;
     s.flesh_bulge = flesh_bulge;
@@ -1197,6 +1198,7 @@ void Viewer::draw_scene(int fb_w, int fb_h) {
     // 肉体参数与当前时间轴帧（烘焙缓存按整数帧查找）。
     const pmx::RenderSettings fs = flesh_render_settings();
     settings.flesh = fs.flesh;
+    settings.flesh_gpu = fs.flesh_gpu;
     settings.flesh_range = fs.flesh_range;
     settings.flesh_dent = fs.flesh_dent;
     settings.flesh_bulge = fs.flesh_bulge;
@@ -1241,6 +1243,9 @@ void Viewer::draw_scene(int fb_w, int fb_h) {
     const float aspect = static_cast<float>(fb_w) / static_cast<float>(std::max(1, fb_h));
     renderer.render(model, *pose, physics_ptr, camera.view(), camera.projection(aspect),
                     fb_w, fb_h, settings, selection);
+    // GPU 肉体是否可用 / 本帧是否命中，反馈给面板显示。
+    flesh_gpu_available = renderer.flesh_gpu_available();
+    flesh_gpu_active = renderer.flesh_gpu_active();
 }
 
 bool Viewer::apply_vpd_file(const std::string& path, std::string* err) {
