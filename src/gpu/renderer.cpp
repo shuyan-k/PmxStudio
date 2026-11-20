@@ -266,6 +266,10 @@ void main() {
 }
 )";
 
+// 叠加层（骨骼 / 刚体 / 关节）的固定光照方向。辅助层与场景方向光解耦：
+// 调整灯光只改变模型与地面的明暗，骨骼的明暗保持稳定，避免「光跟着骨骼走」。
+const Vec3 kOverlayLightDir = normalize(Vec3{0.35f, 0.72f, 0.45f});
+
 const char* kInstVS = R"(#version 460 core
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNrm;
@@ -2016,7 +2020,7 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
         if (!bone_verts_.empty()) {
             solid_program_.use();
             solid_program_.set_mat4("uMVP", vp);
-            solid_program_.set3f("uLightDir", normalize(settings.light_dir));
+            solid_program_.set3f("uLightDir", kOverlayLightDir);
             solid_program_.set3f("uEye", eye);
             glBindVertexArray(bone_mesh_.vao);
             glDrawArrays(glc::GL_TRIANGLES, 0, static_cast<GLsizei>(bone_verts_.size() / 10));
@@ -2035,7 +2039,7 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
                              overlay_instance_ssbo_);
             inst_program_.use();
             inst_program_.set_mat4("uMVP", vp);
-            inst_program_.set3f("uLightDir", normalize(settings.light_dir));
+            inst_program_.set3f("uLightDir", kOverlayLightDir);
             inst_program_.set3f("uEye", eye);
             OverlayMesh* meshes[4] = {&rigid_box_, &rigid_sphere_, &rigid_cylinder_,
                                       &joint_sphere_};
