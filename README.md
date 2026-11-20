@@ -6,7 +6,10 @@
 
 <p align="center">
   <a href="https://github.com/shuyan-k/PmxStudio/actions/workflows/build.yml"><img src="https://github.com/shuyan-k/PmxStudio/actions/workflows/build.yml/badge.svg?branch=main" alt="build"></a>
+  <a href="https://github.com/shuyan-k/PmxStudio/releases/latest"><img src="https://img.shields.io/github/v/release/shuyan-k/PmxStudio" alt="release"></a>
 </p>
+
+当前版本 **v1.1.2**，发布说明见 [docs/releases/v1.1.2.md](docs/releases/v1.1.2.md)。
 
 PMX（MikuMikuDance 模型格式）查看、编辑与出片工具的原生 C++ 实现：C++20 + GLFW 3.4 + Dear ImGui + OpenGL 4.6 + Bullet 3.25。不依赖 Python / PyQt5，Windows 下产物为单文件 exe；第三方源码全部随仓库提供，克隆后**断网也能构建**。
 
@@ -20,6 +23,7 @@ PMX（MikuMikuDance 模型格式）查看、编辑与出片工具的原生 C++ �
 
 - **数据**：PMX 2.0 / 2.1 读写，保留编码、索引宽度与全部字段；结构校验与统计。
 - **渲染**：GPU Compute Shader 蒙皮（BDEF1/2/4、SDEF）、材质 / 球面贴图 / Toon、模板缓冲描边、贴图 alpha 感知的透明分类、地面网格、骨骼 / 刚体 / 关节叠加层与拾取。
+- **骨骼分类**：按日 / 中 / 英骨骼名自动识别体干、四肢、头发、衣服、饰品、道具等类别，视图菜单与骨骼面板可按类别显示 / 隐藏，也可单根手动指定；隐藏的分类同时从视口拾取中排除。
 - **姿态**：FK、付与继承、CCD IK 与逐轴限位、骨骼拖动；VPD 导入 / 导出。
 - **动作**：VMD 导入与播放（30 fps 时间轴、逐轴贝塞尔缓动、形态轨道）、循环 / 变速 / 拖帧，单帧导出 VMD。
 - **时间线**：底部 dope sheet 关键帧编辑（骨骼 / 形态 / 相机 / IK 轨），自动打帧、复制粘贴、框选平移，缓动曲线编辑；IK 开关轨参与求值，相机动作独立存放、单独导入 / 保存。
@@ -31,7 +35,8 @@ PMX（MikuMikuDance 模型格式）查看、编辑与出片工具的原生 C++ �
 - **脚本与 CLI**：`pmxstudio-cli` 无窗口批处理，执行 JSON 脚本（批量改名 / 改刚体参数），与 Agent API 共用 [json.hpp](src/core/json.hpp) 解析器。
 - **形态**：顶点 / UV / 材质 / 骨骼 / 组 / 翻转 / 刚体偏移，滑杆预览。
 - **物理**：Bullet 刚体、6DOF 弹簧关节与柔体（`btSoftBody`），固定 1/120 步进、每帧最多 10 个子步，可边演算边摆姿。
-- **编辑**：编辑模式十一个检查器面板（信息 / 骨骼 / 表示枠 / 顶点 / 材质 / 面 / 形态 / 物理 / 柔体 / 灯光 / 设置），结构增删与索引重映射，撤销 / 重做，主题与偏好持久化；退出时有未保存修改会先弹确认框。
+- **附件**：在不动主模型数据的前提下叠加另一个 PMX（如头顶挂饰），绑定到任意骨骼并支持平移 / 旋转 / 缩放摆放；附件自带的骨骼层级、刚体与关节独立演算，跟随主模型动作，不写入主模型。
+- **编辑**：编辑模式十二个检查器面板（信息 / 骨骼 / 表示枠 / 顶点 / 材质 / 面 / 形态 / 物理 / 柔体 / 附件 / 灯光 / 设置），结构增删与索引重映射，撤销 / 重做，主题与偏好持久化；退出时有未保存修改会先弹确认框。
 - **环境与亮度**：背景色、背景亮度、模型亮度与地面网格颜色可调；背景和网格默认跟随亮 / 暗主题（亮色主题使用浅底深线），灯光页可调光源方向、颜色、强度与环境色。
 - **名称对照**：骨骼 / 形态 / 材质 / 表示枠 / 刚体 / 关节 / 柔体 / 模型名按内置词表把日文或英文原名称译成中文，列表里原文位置不变、中文贴右对齐，详情以「中文：…」列出，搜索框同时匹配原文、英文名与中文。
 
@@ -176,6 +181,10 @@ client.close()
 | `model.load` | `path` | 载入 PMX。相对路径先按进程工作目录解析，再按当前模型目录解析 |
 | `model.info` | — | 名称 / 注释 / 版本 / 编码 / 附加 UV、各类计数、包围盒、`dirty` |
 | `model.bbox` | — | 仅返回 `{"min":[x,y,z],"max":[x,y,z]}` |
+| `model.accessory_load` | `path` | 载入附件 PMX（运行时叠加，不写入主模型） |
+| `model.accessory_set` | `bone?` `pos?` `rot?` `scale?` | 设置附件锚点骨骼、平移、旋转（角度制）与缩放 |
+| `model.accessory` | — | 附件统计、摆放、自带骨骼 / 刚体 / 关节与物理状态 |
+| `model.accessory_clear` | — | 移除附件 |
 | `model.save` | `path` | 保存 PMX（仅编辑模式） |
 | `model.script` | `commands` 或 `script` 或 `path` | 执行 JSON 批处理（仅编辑模式），命令见 `pmxstudio-cli` 脚本格式 |
 
@@ -207,7 +216,8 @@ client.close()
 | `animation.load` | `path`，`camera_only?` `preview?` | 导入 VMD。默认自动切到预览模式；`camera_only=true` 只导入相机轨 |
 | `animation.play` | `playing?` `frame?` `speed?` `loop?` | 播放 / 暂停 / 跳帧 / 变速 / 循环；跳帧会立即重算姿态 |
 | `animation.state` | — | 帧号、总帧、播放状态、轨道与匹配数量、缺失骨骼名、相机轨概况 |
-| `bone.list` | `filter?` | 骨骼索引 / 名称 / 英文名 / 父级 / 位置 / 标志（可子串过滤） |
+| `bone.list` | `filter?` | 骨骼索引 / 名称 / 英文名 / 父级 / 位置 / 标志 / 分类 / 是否显示（可子串过滤） |
+| `bone.categories` | `category?` `visible?` | 返回各显示分类的骨骼数量与开关；带 `category` + `visible` 时设置该类别的显隐 |
 | `bone.pose` | `index` 或 `bone`，`rotation?` 或 `euler?`，`translation?`，`reset?`，`ik_enabled?` | 写姿态覆盖；`euler` 为角度制；`reset=true` 清除该骨骼覆盖 |
 | `morph.list` | — | 形态索引 / 名称 / 面板 / 类型 / 偏移数 / 当前权重 |
 | `morph.set` | `index` 或 `morph`，`weight` | 设置形态权重并立即重建蒙皮 |
@@ -340,8 +350,8 @@ copy build-demo\Release\demo.dll plugins\
 
 标题栏左侧的「编辑 | 预览」按钮（或 `Ctrl+M`）切换当前视图模式，参考 PmxEditor 的编辑 / 预览分工：
 
-- **编辑模式**：完整检查器（信息 / 骨骼 / 表示枠 / 顶点 / 材质 / 面 / 形态 / 物理 / 柔体 / 设置），可修改模型、撤销重做与保存；视图只显示模型原始姿态——不叠加 VMD 动作、不跑 IK 求解、不演算物理，VPD / VMD 导入入口在菜单里置灰（拖入会提示先切到预览模式）。Agent API 的模型编辑命令也要求处于编辑模式。
-- **预览模式**：相当于 PmxEditor 的 TransformView——右键旋转、左键位移都只影响当前姿态，不落盘。检查器只剩「检索 / 动作 / 时间线 / 烘焙 / 输出 / 物理 / 形态 / 设置」八个控制标签，菜单里的保存 / 另存为 / 导出 VPD / 导出 VMD 置灰（`Ctrl+S` 改为保存动作 VMD），撤销只能撤销摆姿条目（数据修改需切回编辑模式撤销）。物理开关与参数、VMD 播放、形态滑杆、显示开关照常可用。
+- **编辑模式**：完整检查器（信息 / 骨骼 / 表示枠 / 顶点 / 材质 / 面 / 形态 / 物理 / 柔体 / 附件 / 灯光 / 设置），可修改模型、撤销重做与保存；视图只显示模型原始姿态——不叠加 VMD 动作、不跑 IK 求解、不演算物理，VPD / VMD 导入入口在菜单里置灰（拖入会提示先切到预览模式）。Agent API 的模型编辑命令也要求处于编辑模式。
+- **预览模式**：相当于 PmxEditor 的 TransformView——右键旋转、左键位移都只影响当前姿态，不落盘。检查器只剩「检索 / 动作 / 时间线 / 相机 / 烘焙 / 输出 / 物理 / 形态 / 附件 / 灯光 / 设置」十一个控制标签，菜单里的保存 / 另存为 / 导出 VPD / 导出 VMD 置灰（`Ctrl+S` 改为保存动作 VMD），撤销只能撤销摆姿条目（数据修改需切回编辑模式撤销）。物理开关与参数、VMD 播放、形态滑杆、显示开关照常可用。
 
 进入预览时按当前动作帧重新落姿态，物理以该帧为初始姿态复位，之后才允许播放动作 / 演算 / 摆姿；切回编辑时暂停动作、清零形态权重并 `reset()` 姿态，物理回写与临时摆姿都不会残留到数据视图。两种模式共用同一个撤销栈。
 
@@ -362,6 +372,7 @@ copy build-demo\Release\demo.dll plugins\
 - **形态**：顶点 / UV / 材质 / 骨骼 / 组 / 翻转 / 刚体偏移编辑，类型切换，滑杆预览（不写入文件）。
 - **物理**：刚体（形状 / 质量 / 摩擦 / 衰减 / 组 / 碰撞掩码）与关节（6DOF 限制 / 弹簧）编辑。
 - **柔体**：PMX 2.1 柔体参数、锚点与固定点编辑。
+- **附件**：导入 / 移除附件 PMX，选择主模型锚点骨骼，调整位置 / 旋转 / 缩放，查看附件自带骨骼 / 刚体 / 关节数量与物理状态，并可单独重置附件物理。
 - **灯光**：光源方向、颜色与强度、环境色、光源 gizmo；编辑与预览模式都可调，只影响视图和渲染输出，不写入 PMX。
 - **设置**：背景色 / 背景亮度 / 模型亮度、地面网格颜色、叠加层不透明度、重力 / 迭代 / 地面、配置文件路径、快捷键。显示开关、物理开关与深浅主题统一在顶部「视图」菜单。
 
@@ -375,6 +386,7 @@ copy build-demo\Release\demo.dll plugins\
 - **输出**：分辨率 / 超采样 / 帧范围 / CRF 设置，离屏渲染 PNG 序列并调用 ffmpeg 编码视频；音频载入、波形、偏移校准与导出合轨。
 - **物理**：物理演算开关、重置 / 清速度、重力 / 迭代 / 地面。编辑模式下物理不参与求值，刚体与关节的字段编辑见上。
 - **形态**：形态滑杆，只影响当前预览姿态，不写入文件。
+- **附件**：与编辑模式相同的附件导入与摆放；预览模式下附件物理随主模型物理开关一起演算。
 - **灯光**：与编辑模式相同，可调光源方向、颜色、强度与环境色。
 - **设置**：同编辑模式的设置面板，另含帧 / 物理 / IK / 蒙皮 / UI 的性能计时。
 
@@ -407,6 +419,7 @@ copy build-demo\Release\demo.dll plugins\
 │  │  ├─ script.hpp/.cpp     JSON 批处理命令
 │  │  ├─ text_codec.hpp      名称编码：CP932 ↔ UTF-8 与宽松匹配键
 │  │  ├─ name_zh.hpp/.cpp    日文 / 英文名称 → 中文对照词表（八类，只读）
+│  │  ├─ bone_category.hpp/.cpp 骨骼显示分类：名称识别、手动覆盖与可见性掩码
 │  │  ├─ fs.hpp              路径编码辅助（UTF-8 ↔ 宽字符）
 │  │  └─ utf8_args.hpp/.cpp  Windows 宽字符命令行 → UTF-8 参数
 │  ├─ gpu/
@@ -424,6 +437,7 @@ copy build-demo\Release\demo.dll plugins\
 │  │  ├─ plugin.hpp/.cpp     插件扫描、动态加载与命令分发
 │  │  ├─ viewer.hpp          查看器状态：模型、姿态、选择、撤销栈、编辑入口
 │  │  ├─ viewer_edit.cpp     编辑 / 撤销 / 重做与运行时重建（Pose / 网格 / 物理）
+│  │  ├─ accessory.cpp       附件 PMX 叠加：锚点骨骼、自带骨骼蒙皮与物理
 │  │  ├─ document_ops.*      结构性增删与索引重映射
 │  │  ├─ timeline.*          时间线数据与交互
 │  │  ├─ export.*            渲染输出 / 音频导出
@@ -476,7 +490,7 @@ Agent API 与插件加载只使用系统 socket / `dlopen` / `LoadLibrary`，不
 
 ## 测试
 
-`pmx_tests` 共 237 项检查，不创建窗口；另有三组模块测试（`pmx_tests_anim`、`pmx_tests_bake`、`pmx_tests_script`）：
+`pmx_tests` 共 280 项检查，不创建窗口；另有三组模块测试（`pmx_tests_anim`、`pmx_tests_bake`、`pmx_tests_script`）：
 
 ```powershell
 build\Release\pmx_tests.exe      # Windows
@@ -498,6 +512,7 @@ ctest --test-dir build           # 或一次跑全部
 7. 动画（`anim`）：VMD ↔ AnimClip 往返、轨道查找 / 覆盖 / 排序、相机欧拉角互转、插值采样。
 8. 烘焙（`bake`）：固定步长重放的逐位一致、刚体骨骼写出、预热与范围裁剪。
 9. 脚本（`script`）：JSON 解析（含 `\u` 代理对）、批量改名 / 刚体参数、错误信息。
+10. 骨骼分类：日 / 中 / 英关键词识别、优先级（袖优先四肢、耳环优先体干）、英文大小写、手动覆盖与分类可见性掩码。
 
 Agent API 与插件的手工验收方式：用 Xvfb 或无头桌面启动 `pmxstudio --api`，按「Python 客户端示例」发请求；`plugin.list` 应列出已加载插件，`scene.render` 生成的 PNG 可直接检查。
 
@@ -638,6 +653,8 @@ VMD 以 30 fps 计时，播放时按 `dt * 30 * 速度` 推进帧号，循环用
 - IK 限位按欧拉逐轴钳制；接近 ±90° 时用分支滞回保持连续。
 - Agent API 只监听回环地址且没有鉴权，默认端口 8422；同一时间只应有一个进程占用该端口。
 - 非 Windows 平台缺少 CP932 → UTF-8 转换表，VMD / PMX 中的日文名称按原始字节保留，可能无法与模型中已转成 UTF-8 的名称匹配；Agent API 会把非法 UTF-8 字节替换为 U+FFFD 后再输出。
+- 附件物理与主模型物理是两个独立世界：附件只与自身刚体 / 关节碰撞，不与主模型的头发、衣服碰撞；附件也没有独立的 VMD 轨道，只跟随锚点骨骼与自身物理。附件不参与保存、拾取与编辑。
+- 骨骼分类按名称关键词推断，手动指定的分类只在当前运行期有效；骨骼增删后会重新自动识别。
 
 ## 许可
 

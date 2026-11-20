@@ -44,7 +44,7 @@
 #endif
 
 #ifndef PMXSTUDIO_VERSION
-#define PMXSTUDIO_VERSION "0.1.0"
+#define PMXSTUDIO_VERSION "1.1.2"
 #endif
 
 namespace {

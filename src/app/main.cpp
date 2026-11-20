@@ -943,7 +943,7 @@ void Viewer::draw_ui() {
                 reveal_frames = 2;
             }
             ImGui::Separator();
-            ImGui::TextDisabled("PmxStudio 0.1.0 · GPLv3");
+            ImGui::TextDisabled("PmxStudio " PMXSTUDIO_VERSION " · GPLv3");
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
