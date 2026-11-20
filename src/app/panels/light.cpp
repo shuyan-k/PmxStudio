@@ -106,5 +106,6 @@ void panel_light(Viewer& v) {
         v.shadow_softness = 1.0f;
         v.shadow_ground = true;
     }
+    ImGui::TextDisabled("骨骼 / 刚体 / 关节叠加层使用独立固定光照，不随上方灯光方向变化。");
     ImGui::TextDisabled("灯光随 settings.ini 保存，下次启动沿用。");
 }
