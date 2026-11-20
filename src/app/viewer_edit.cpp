@@ -482,7 +482,6 @@ void Viewer::refresh_after_edit(const std::string& kind) {
 }
 
 void Viewer::rebuild_runtime(bool geometry, bool skeleton, bool physics_rebuild) {
-    (void)skeleton;  // Pose 必须重建（它持有 Model 引用），这里统一处理
     PoseEntry old = capture_pose();
     const std::size_t old_morphs = morph_values.size();
     std::vector<float> old_values = morph_values;
@@ -505,9 +504,20 @@ void Viewer::rebuild_runtime(bool geometry, bool skeleton, bool physics_rebuild)
     for (std::size_t i = 0; i < morph_values.size(); ++i)
         if (morph_values[i] > 1e-4f) morph_weights.emplace_back(static_cast<int>(i), morph_values[i]);
 
+    // 骨骼增删后附件的锚点索引不再可靠，直接移除附件。
+    if (skeleton && accessory_loaded) {
+        accessory = pmx::Model{};
+        render_model = pmx::Model{};
+        accessory_path.clear();
+        accessory_loaded = false;
+        accessory_bone = -1;
+        accessory_vertex_base = 0;
+    }
+    // 材质/骨骼数据可能刚被改过，渲染模型要同步；无附件时是空操作。
+    rebuild_render_model();
     if (geometry) {
         std::string err;
-        if (!renderer.upload_model(model, &err)) error = err;
+        if (!renderer.upload_model(active_model(), &err)) error = err;
     }
 
     morph_dirty = true;

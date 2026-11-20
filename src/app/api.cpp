@@ -747,6 +747,111 @@ JsonValue cmd_model_load(Viewer& viewer, const JsonValue& params) {
     return model_info(viewer);
 }
 
+JsonValue accessory_json(const Viewer& viewer) {
+    JsonValue out = pmx::json_object();
+    pmx::json_set(out, "loaded", pmx::json_bool(viewer.accessory_loaded));
+    set_string(out, "path", viewer.accessory_path);
+    const int bone = viewer.accessory_loaded ? viewer.accessory_bone : -1;
+    pmx::json_set(out, "bone", pmx::json_number(bone));
+    set_string(out, "bone_name",
+               bone >= 0 && bone < static_cast<int>(viewer.model.bones.size())
+                   ? viewer.model.bones[static_cast<std::size_t>(bone)].name
+                   : "");
+    pmx::json_set(out, "vertices",
+                  pmx::json_number(static_cast<double>(viewer.accessory.vertices.size())));
+    pmx::json_set(out, "materials",
+                  pmx::json_number(static_cast<double>(viewer.accessory.materials.size())));
+    pmx::json_set(out, "pos",
+                  vec3_json({viewer.accessory_pos[0], viewer.accessory_pos[1],
+                             viewer.accessory_pos[2]}));
+    pmx::json_set(out, "rot",
+                  vec3_json({viewer.accessory_rot[0], viewer.accessory_rot[1],
+                             viewer.accessory_rot[2]}));
+    pmx::json_set(out, "scale", pmx::json_number(viewer.accessory_scale));
+    return out;
+}
+
+// 附件参数：bone 支持骨骼名或索引，pos / rot（角度）/ scale 直接覆盖当前值。
+void apply_accessory_params(Viewer& viewer, const JsonValue& params) {
+    bool structure = false;
+    bool transform = false;
+    if (const JsonValue* bone = params.find("bone")) {
+        int index = -1;
+        if (bone->is_string()) {
+            for (std::size_t i = 0; i < viewer.model.bones.size(); ++i) {
+                if (viewer.model.bones[i].name == bone->string ||
+                    viewer.model.bones[i].name_en == bone->string) {
+                    index = static_cast<int>(i);
+                    break;
+                }
+            }
+            if (index < 0) throw ApiError{"找不到骨骼 \"" + bone->string + "\""};
+        } else if (bone->is_number() && std::floor(bone->number) == bone->number) {
+            index = static_cast<int>(bone->number);
+        } else {
+            throw ApiError{"参数 \"bone\" 必须是骨骼名或整数索引"};
+        }
+        if (index < 0 || index >= static_cast<int>(viewer.model.bones.size()))
+            throw ApiError{"附件锚点骨骼索引越界"};
+        if (index != viewer.accessory_bone) {
+            viewer.accessory_bone = index;
+            structure = true;
+        }
+    }
+    if (const JsonValue* pos = params.find("pos")) {
+        const pmx::Vec3 p = read_vec3(*pos, "pos");
+        viewer.accessory_pos[0] = p.x;
+        viewer.accessory_pos[1] = p.y;
+        viewer.accessory_pos[2] = p.z;
+        transform = true;
+    }
+    if (const JsonValue* rot = params.find("rot")) {
+        const pmx::Vec3 r = read_vec3(*rot, "rot");
+        viewer.accessory_rot[0] = r.x;
+        viewer.accessory_rot[1] = r.y;
+        viewer.accessory_rot[2] = r.z;
+        transform = true;
+    }
+    if (const JsonValue* scale = params.find("scale")) {
+        if (!scale->is_number() || !(scale->number > 0.0))
+            throw ApiError{"参数 \"scale\" 必须是正数"};
+        viewer.accessory_scale = static_cast<float>(scale->number);
+        transform = true;
+    }
+    if (structure) viewer.apply_accessory_structure();
+    else if (transform) viewer.update_accessory_transform();
+}
+
+JsonValue cmd_model_accessory_load(Viewer& viewer, const JsonValue& params) {
+    if (!viewer.pose) throw ApiError{"尚未加载模型"};
+    std::string path = require_string(params, "path");
+    if (!pmx::path_exists(path) && !viewer.model_path.empty()) {
+        const std::filesystem::path candidate =
+            pmx::utf8_path(viewer.model_path).parent_path() / pmx::utf8_path(path);
+        if (pmx::path_exists(pmx::utf8_string(candidate)))
+            path = pmx::utf8_string(candidate);
+    }
+    if (!pmx::path_exists(path)) throw ApiError{"文件不存在：" + path};
+
+    std::string error;
+    if (!viewer.load_accessory(path, &error)) throw ApiError{"加载附件失败：" + error};
+    apply_accessory_params(viewer, params);
+    return accessory_json(viewer);
+}
+
+JsonValue cmd_model_accessory_clear(Viewer& viewer) {
+    if (!viewer.pose) throw ApiError{"尚未加载模型"};
+    viewer.clear_accessory();
+    return accessory_json(viewer);
+}
+
+JsonValue cmd_model_accessory_set(Viewer& viewer, const JsonValue& params) {
+    if (!viewer.pose) throw ApiError{"尚未加载模型"};
+    if (!viewer.accessory_loaded) throw ApiError{"尚未加载附件模型"};
+    apply_accessory_params(viewer, params);
+    return accessory_json(viewer);
+}
+
 JsonValue cmd_model_save(Viewer& viewer, const JsonValue& params) {
     if (!viewer.pose) throw ApiError{"尚未加载模型"};
     if (viewer.preview_mode) throw ApiError{"预览模式下模型只读，请先切换到编辑模式"};
@@ -871,7 +976,7 @@ JsonValue cmd_scene_render(Viewer& viewer, const JsonValue& params) {
         throw ApiError{"创建离屏渲染目标失败：" + error};
     const float aspect = static_cast<float>(width) / static_cast<float>(std::max(1, height));
     target.bind();
-    viewer.renderer.render(viewer.model, *viewer.pose, nullptr, viewer.camera.view(),
+    viewer.renderer.render(viewer.active_model(), *viewer.pose, nullptr, viewer.camera.view(),
                            viewer.camera.projection(aspect), width, height,
                            render_settings(viewer, overlays), pmx::Selection{});
     std::vector<std::uint8_t> rgba;
@@ -1262,6 +1367,10 @@ JsonValue dispatch(Viewer& viewer, const std::string& method, const JsonValue& p
 
     if (method == "model.load") return cmd_model_load(viewer, params);
     if (method == "model.info") return model_info(viewer);
+    if (method == "model.accessory") return accessory_json(viewer);
+    if (method == "model.accessory_load") return cmd_model_accessory_load(viewer, params);
+    if (method == "model.accessory_clear") return cmd_model_accessory_clear(viewer);
+    if (method == "model.accessory_set") return cmd_model_accessory_set(viewer, params);
     if (method == "model.save") return cmd_model_save(viewer, params);
     if (method == "model.script") return cmd_model_script(viewer, params);
     if (method == "model.bbox") {
