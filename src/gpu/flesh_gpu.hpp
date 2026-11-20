@@ -19,7 +19,7 @@
 
 namespace pmx {
 
-class Model;
+struct Model;
 
 // 每帧参数快照；range 是占身高比例，内部按 reset 记录的身高换算成世界单位。
 struct GpuFleshParams {

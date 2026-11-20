@@ -12,7 +12,7 @@
 
 namespace pmx {
 
-class Model;
+struct Model;
 
 // 由骨骼姿态换算到世界空间的碰撞体：球（a 为球心）或胶囊（a→b）。
 struct FleshColliderShape {
