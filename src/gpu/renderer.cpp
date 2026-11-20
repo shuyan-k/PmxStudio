@@ -1368,17 +1368,20 @@ void SceneRenderer::update_vertex_range(const Model& model, std::size_t first) {
         clear_flesh_cache();
     }
     glBindBuffer(glc::GL_SHADER_STORAGE_BUFFER, model_.vbo);
-    const GLsizeiptr total =
-        static_cast<GLsizeiptr>(nv * kFloatsPerVertex * sizeof(float));
+    // 只映射需要更新的尾部：附件动画每帧都会走这条路径，避免整缓冲拷贝。
+    const GLintptr offset =
+        static_cast<GLintptr>(first * kFloatsPerVertex * sizeof(float));
+    const GLsizeiptr bytes = static_cast<GLsizeiptr>(
+        (nv - first) * kFloatsPerVertex * sizeof(float));
     auto* base = static_cast<std::uint8_t*>(
-        glMapBufferRange(glc::GL_SHADER_STORAGE_BUFFER, 0, total,
+        glMapBufferRange(glc::GL_SHADER_STORAGE_BUFFER, offset, bytes,
                          glc::GL_MAP_WRITE_BIT | glc::GL_MAP_UNSYNCHRONIZED_BIT));
     if (base) {
         const auto& pos = model.vertices.pos;
         const auto& nrm = model.vertices.nrm;
         for (std::size_t i = first; i < nv; ++i) {
             float* o = reinterpret_cast<float*>(
-                base + i * kFloatsPerVertex * sizeof(float));
+                base + (i - first) * kFloatsPerVertex * sizeof(float));
             o[0] = pos[i].x;
             o[1] = pos[i].y;
             o[2] = pos[i].z;

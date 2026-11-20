@@ -5,29 +5,27 @@
 #include "app/viewer.hpp"
 #include "core/math.hpp"
 #include "core/pmx.hpp"
+#include "core/skinning.hpp"
 
 namespace {
 
 constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
 
-// 附件在静止姿态下的世界变换：先缩放、再旋转、最后平移。
+// 附件在静止姿态下的世界变换：先旋转、再平移（缩放已烘焙进 accessory 副本，
+// Pose 没有缩放通道，缩放必须落在几何与骨骼上）。
 pmx::Mat4 accessory_matrix(const Viewer& v) {
     const pmx::Quat q = pmx::euler_to_quat(v.accessory_rot[0] * kDegToRad,
                                           v.accessory_rot[1] * kDegToRad,
                                           v.accessory_rot[2] * kDegToRad);
-    pmx::Mat4 m = pmx::from_quat_pos(
-        q, pmx::Vec3{v.accessory_pos[0], v.accessory_pos[1], v.accessory_pos[2]});
-    const float s = v.accessory_scale;
-    for (int r = 0; r < 3; ++r)
-        for (int c = 0; c < 3; ++c) m.at(r, c) *= s;
-    return m;
+    return pmx::from_quat_pos(q, pmx::Vec3{v.accessory_pos[0], v.accessory_pos[1],
+                                          v.accessory_pos[2]});
 }
 
 // 附件顶点直接落在世界坐标：蒙皮矩阵是 W * T(-rest)，静止时 W = T(rest)，
 // 因此世界坐标即静止坐标，骨骼运动后由矩阵带出去。
 void write_accessory_vertices(Viewer& v) {
     const std::size_t base = v.accessory_vertex_base;
-    const std::size_t na = v.accessory.vertices.size();
+    const std::size_t na = v.accessory.vertices.pos.size();
     if (base == 0 || na == 0) return;
     if (v.render_model.vertices.size() != base + na) return;
 
@@ -63,14 +61,14 @@ int Viewer::default_accessory_bone() const {
 
 void Viewer::rebuild_render_model() {
     accessory_vertex_base = 0;
-    if (!accessory_loaded || accessory.vertices.size() == 0 || model.vertices.size() == 0) {
+    if (!accessory_loaded || accessory.vertices.pos.size() == 0 || model.vertices.size() == 0) {
         render_model = pmx::Model{};
         return;
     }
 
     render_model = model;
     const std::size_t nv = model.vertices.size();
-    const std::size_t na = accessory.vertices.size();
+    const std::size_t na = accessory.vertices.pos.size();
     accessory_vertex_base = nv;
 
     // 附件顶点全部 100% 绑定到锚点骨骼（BDEF1）。
@@ -142,6 +140,7 @@ void Viewer::rebuild_render_model() {
 
 void Viewer::apply_accessory_structure() {
     rebuild_render_model();
+    accessory_reset = true;
     if (!pose) return;
     std::string err;
     if (!renderer.upload_model(active_model(), &err)) {
@@ -151,9 +150,144 @@ void Viewer::apply_accessory_structure() {
     apply_morphs();
 }
 
+void Viewer::rebuild_accessory_scaled() {
+    accessory_pose.reset();
+    accessory_skin.reset();
+#ifdef PMX_ENABLE_PHYSICS
+    accessory_physics.reset();
+#endif
+    accessory_physics_active = false;
+    accessory_skin_pos.clear();
+    accessory_skin_nrm.clear();
+    accessory_reset = true;
+    if (!accessory_loaded) return;
+
+    // 缩放必须烘焙进几何与骨骼：Pose / Physics 都没有缩放通道。
+    accessory = accessory_base;
+    const float s = std::clamp(accessory_scale, 0.01f, 100.0f);
+    accessory_scale = s;
+    if (std::fabs(s - 1.0f) > 1e-6f) {
+        for (pmx::Vec3& p : accessory.vertices.pos) p = p * s;
+        for (auto& sd : accessory.vertices.sdef)
+            for (float& v : sd) v *= s;  // C / R0 / R1 都是长度量
+        for (pmx::Bone& b : accessory.bones) {
+            b.pos = b.pos * s;
+            b.tail_offset = b.tail_offset * s;
+        }
+        for (pmx::RigidBody& r : accessory.rigid) {
+            r.pos = r.pos * s;
+            r.size = r.size * s;
+        }
+        for (pmx::Joint& j : accessory.joints) {
+            j.pos = j.pos * s;
+            j.min_loc = j.min_loc * s;
+            j.max_loc = j.max_loc * s;
+            j.spring_loc = j.spring_loc * s;
+        }
+        for (pmx::Morph& mo : accessory.morphs) {
+            if (mo.type != 1) continue;  // 只缩放顶点形态的位移
+            for (pmx::MorphOffset& off : mo.offsets) {
+                off.offset.x *= s;
+                off.offset.y *= s;
+                off.offset.z *= s;
+            }
+        }
+    }
+
+    if (accessory.bones.empty() || accessory.vertices.pos.empty()) return;
+    accessory_pose = std::make_unique<pmx::Pose>(accessory);
+    accessory_skin = std::make_unique<pmx::SkinDeformer>(accessory);
+    accessory_skin_pos.assign(accessory.vertices.pos.size(), pmx::Vec3{});
+    accessory_skin_nrm.assign(accessory.vertices.pos.size(), pmx::Vec3{});
+#ifdef PMX_ENABLE_PHYSICS
+    // 附件自带刚体时建独立物理世界：跟随锚点骨骼在主场空间里演算，
+    // 才能正确响应头部运动和重力。地面不需要，避免垂饰掉到 y=0。
+    if (!accessory.rigid.empty() && physics_ptr) {
+        auto phys = std::make_unique<pmx::Physics>();
+        phys->gravity = physics_ptr->gravity;
+        phys->iterations = physics_ptr->iterations;
+        phys->warmup_steps = physics_ptr->warmup_steps;
+        phys->ground = false;
+        if (phys->build(accessory)) accessory_physics = std::move(phys);
+    }
+#endif
+}
+
+void Viewer::update_accessory_frame(float dt) {
+    accessory_physics_active = false;
+    if (!accessory_loaded || !pose || !accessory_pose || !accessory_skin) return;
+    const std::size_t base = accessory_vertex_base;
+    const std::size_t na = accessory.vertices.pos.size();
+    if (base == 0 || na == 0 || render_model.vertices.size() != base + na) return;
+
+    // 锚点骨骼相对静止的刚性增量：渲染模型把附件段绑在锚点骨骼上，
+    // 写回顶点时要先除掉它，GPU/CPU 蒙皮会再乘回来。
+    pmx::Mat4 delta = pmx::identity4();
+    const std::vector<pmx::Mat4>& main_world = pose->world();
+    if (accessory_bone >= 0 && accessory_bone < static_cast<int>(model.bones.size()) &&
+        accessory_bone < static_cast<int>(main_world.size())) {
+        const pmx::Vec3 rest = model.bones[static_cast<std::size_t>(accessory_bone)].pos;
+        const pmx::Mat4 rest_m = pmx::from_quat_pos(pmx::identity_quat(), rest);
+        delta = pmx::mul(main_world[static_cast<std::size_t>(accessory_bone)],
+                         pmx::inverse_rigid(rest_m));
+    }
+
+    // 附件根骨骼落到 delta * 摆放矩阵上，其余骨骼保留自己的局部姿态（物理会写入）。
+    const pmx::Mat4 attach = pmx::mul(delta, accessory_matrix(*this));
+    for (int i = 0; i < accessory_pose->n; ++i) {
+        const std::size_t si = static_cast<std::size_t>(i);
+        if (accessory_pose->parent[si] >= 0) continue;
+        const pmx::Vec3 rest = accessory.bones[si].pos;
+        const pmx::Mat4 w = pmx::mul(attach, pmx::from_quat_pos(pmx::identity_quat(), rest));
+        accessory_pose->base_rot[si] = pmx::mat3_to_quat(pmx::upper3(w));
+        accessory_pose->base_trans[si] = pmx::Vec3{w.at(0, 3) - rest.x, w.at(1, 3) - rest.y,
+                                                   w.at(2, 3) - rest.z};
+    }
+    // 上一帧物理写在 ov 里的覆盖不能留到本帧：关物理/复位后要回到动画姿态，
+    // 物理演算自己会重新写入覆盖。
+    accessory_pose->clear_overrides();
+    accessory_pose->apply();
+    if (preview_mode) accessory_pose->solve_ik();
+    accessory_pose->world();
+
+#ifdef PMX_ENABLE_PHYSICS
+    const bool simulate = preview_mode && physics_enabled && accessory_physics != nullptr;
+    if (simulate) {
+        // 与主模型物理保持同一组参数（重力 / 迭代次数跟随面板）。
+        if (physics_ptr)
+            accessory_physics->set_params(physics_ptr->gravity, physics_ptr->iterations);
+        accessory_physics->enabled = true;
+        if (accessory_reset) {
+            accessory_physics->reset(*accessory_pose, nullptr, true);
+            accessory_reset = false;
+        } else if (dt > 0.0f) {
+            accessory_physics->advance(*accessory_pose, dt);
+        }
+        accessory_pose->world();
+        accessory_physics_active = true;
+    } else {
+        accessory_reset = true;
+    }
+#endif
+
+    // 附件自带骨骼蒙皮（世界坐标已含 delta 与摆放），再换算回锚点静止空间。
+    accessory_skin->deform(accessory.vertices.pos, accessory.vertices.nrm,
+                           accessory_pose->world(), accessory_skin_pos, accessory_skin_nrm);
+    const pmx::Mat4 inv_delta = pmx::inverse_rigid(delta);
+    const pmx::Mat3 inv_rot = pmx::upper3(inv_delta);
+    pmx::VertexData& dst = render_model.vertices;
+    for (std::size_t i = 0; i < na; ++i) {
+        dst.pos[base + i] = pmx::transform_point(inv_delta, accessory_skin_pos[i]);
+        const pmx::Vec3 n = pmx::mul(inv_rot, accessory_skin_nrm[i]);
+        const float len = pmx::length(n);
+        dst.nrm[base + i] = len > 1e-8f ? n * (1.0f / len) : n;
+    }
+    renderer.update_vertex_range(render_model, base);
+}
+
 bool Viewer::load_accessory(const std::string& path, std::string* err) {
-    if (!pose) {
-        if (err) *err = "尚未加载主模型";
+    if (!pose || model.bones.empty()) {
+        if (err) *err = "尚未加载模型或模型没有骨骼";
         return false;
     }
     pmx::Model acc;
@@ -168,7 +302,7 @@ bool Viewer::load_accessory(const std::string& path, std::string* err) {
         return false;
     }
 
-    accessory = std::move(acc);
+    accessory_base = std::move(acc);
     accessory_path = path;
     accessory_loaded = true;
     accessory_bone = default_accessory_bone();
@@ -184,6 +318,7 @@ bool Viewer::load_accessory(const std::string& path, std::string* err) {
         accessory_pos[0] = accessory_pos[1] = accessory_pos[2] = 0.0f;
     }
 
+    rebuild_accessory_scaled();
     apply_accessory_structure();
     status = "已加载附件 " + path;
     return true;
@@ -192,6 +327,16 @@ bool Viewer::load_accessory(const std::string& path, std::string* err) {
 void Viewer::clear_accessory() {
     const bool had = accessory_loaded;
     accessory = pmx::Model{};
+    accessory_base = pmx::Model{};
+    accessory_pose.reset();
+    accessory_skin.reset();
+#ifdef PMX_ENABLE_PHYSICS
+    accessory_physics.reset();
+#endif
+    accessory_skin_pos.clear();
+    accessory_skin_nrm.clear();
+    accessory_reset = false;
+    accessory_physics_active = false;
     render_model = pmx::Model{};
     accessory_path.clear();
     accessory_loaded = false;
@@ -213,10 +358,11 @@ void Viewer::update_accessory_transform() {
     // 结构过期（主模型刚改过几何）：走完整重建与上传。
     if (accessory_vertex_base == 0 ||
         render_model.vertices.size() !=
-            model.vertices.size() + accessory.vertices.size()) {
+            model.vertices.size() + accessory.vertices.pos.size()) {
         apply_accessory_structure();
         return;
     }
+    accessory_reset = true;
     write_accessory_vertices(*this);
     // 主模型的形态结果不变，只把附件段写回 VBO（贴图与缓冲都不重建）。
     renderer.update_vertex_range(active_model(), accessory_vertex_base);

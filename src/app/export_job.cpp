@@ -109,6 +109,8 @@ void export_job_tick(Viewer& v) {
 #endif
     job.physics_frame = job.current;
     v.pose->world();
+    // 附件自带骨骼/物理：按导出帧间隔推进，保证成片里的挂饰摆动一致。
+    v.update_accessory_frame(static_cast<float>(job.settings.step) / 30.0f);
 
     // 场景相机：有相机动作就按相机轨渲染（与视口是否处于相机视角无关）。
     pmx::OrbitCamera camera = v.camera;
