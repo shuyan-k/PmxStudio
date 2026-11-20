@@ -20,6 +20,17 @@ namespace pmx {
 
 class Physics;
 
+// 外部碰撞体（UI 与配置里的形态）：挂在骨骼上，运行时按骨骼世界矩阵换算成
+// 球 / 胶囊。offset 是相对骨骼原点的局部平移，胶囊沿骨骼局部 +Y 伸展 length。
+struct FleshColliderSpec {
+    int bone = -1;
+    int shape = 0;  // 0 球，1 胶囊
+    Vec3 offset{0.0f, 0.0f, 0.0f};
+    float length = 0.0f;
+    float radius = 0.5f;
+    float firmness = 0.0f;
+};
+
 struct RenderSettings {
     bool show_mesh = true;
     bool show_bones = true;
@@ -77,6 +88,17 @@ struct RenderSettings {
     float flesh_firmness = 0.0f;  // 整体硬度
     int flesh_region_bone = -1;   // 额外硬区域骨骼
     float flesh_region_firmness = 0.7f;
+    // Corner Taper：折痕闭合端回收隆起。
+    float flesh_taper = 0.55f;
+    float flesh_taper_reach = 0.70f;
+    float flesh_taper_falloff = 1.0f;
+    // 外部碰撞体：随骨骼运动，压入肉体并按各自硬度形变。
+    std::vector<FleshColliderSpec> flesh_colliders;
+    bool show_flesh_colliders = true;
+    // 烘焙缓存：按整数帧复用蒙皮 + 肉体解算结果；flesh_frame 是当前时间轴位置。
+    bool flesh_cache = false;
+    float flesh_smooth = 0.5f;   // Smooth Pops 强度（0 关闭）
+    float flesh_frame = -1.0f;   // < 0 表示不做缓存查找
 
     // 场景相机可视化（Blender 风格）：机位线框 + 取景锥。
     bool show_camera = false;
@@ -123,6 +145,14 @@ public:
     void render(const Model& model, Pose& pose, Physics* physics, const Mat4& view,
                 const Mat4& proj, int width, int height, const RenderSettings& settings,
                 const Selection& selection);
+
+    // 烘焙单帧：按当前姿态计算蒙皮 + 肉体结果并写入缓存（不依赖 GL 状态）。
+    bool bake_flesh_frame(const Model& model, Pose& pose, const RenderSettings& settings,
+                          int frame, std::string* error);
+    void clear_flesh_cache();
+    int flesh_cache_frames() const { return static_cast<int>(flesh_cache_.size()); }
+    std::size_t flesh_cache_bytes() const { return flesh_cache_bytes_; }
+    int flesh_cache_hits() const { return flesh_cache_hits_; }
 
     // 屏幕空间拾取：返回命中的骨骼/刚体/关节索引。
     Selection pick(const Model& model, Pose& pose, Physics* physics, const Mat4& view,
@@ -246,8 +276,26 @@ private:
 
     // 顶点形态（含表情/口型）后的静止坐标，CPU 蒙皮用；GPU 路径由 VBO 提供。
     std::vector<Vec3> base_pos_;
+    // 静止坐标指纹：形态变化会让烘焙缓存失效。
+    std::uint64_t base_hash_ = 0;
     // 自接触求解器：结构变化时 reset，逐帧形变不改变拓扑。
     FleshSolver flesh_solver_;
+
+    // 烘焙缓存：按整数帧保存蒙皮 + 肉体形变结果，以及该帧的骨骼世界矩阵
+    // （用于识别手动改姿态 / 物理回写后缓存是否仍然有效）。
+    struct FleshBakeFrame {
+        std::vector<Vec3> pos;
+        std::vector<Vec3> nrm;
+        std::vector<Mat4> bones;
+        std::uint64_t param_key = 0;
+    };
+    std::unordered_map<int, FleshBakeFrame> flesh_cache_;
+    std::size_t flesh_cache_bytes_ = 0;
+    int flesh_cache_hits_ = 0;
+    // Smooth Pops 的上一帧位移；只在连续帧、同一参数下混合。
+    std::vector<Vec3> flesh_prev_delta_;
+    float flesh_prev_frame_ = -1e9f;
+    std::uint64_t flesh_prev_key_ = 0;
 
     std::vector<float> skin_matrices_;
     std::vector<float> inst_data_;
@@ -297,6 +345,18 @@ private:
     void upload_cpu_skin(const Model& model, Pose& pose);
     void upload_cpu_skin_flesh(const Model& model, Pose& pose, const RenderSettings& settings);
     void upload_skinned(const std::vector<Vec3>& pos, const std::vector<Vec3>& nrm);
+    // 按骨骼姿态把 UI 里的碰撞体换算成世界空间形状。
+    void build_flesh_colliders(Pose& pose, const RenderSettings& settings,
+                               std::vector<FleshColliderShape>& out) const;
+    // 参数 + 静止坐标 + 碰撞体的指纹：缓存只在指纹一致时复用。
+    std::uint64_t flesh_param_key(const RenderSettings& settings,
+                                  const std::vector<FleshColliderShape>& colliders) const;
+    // 尝试用相邻两个烘焙帧插值上传；成功返回 true。
+    bool upload_baked_flesh(const RenderSettings& settings, Pose& pose, std::uint64_t key);
+    // 蒙皮 + 肉体解算（可选 Smooth Pops），供实时与烘焙共用。
+    void deform_flesh(const Model& model, Pose& pose, const RenderSettings& settings,
+                      float frame, bool allow_smooth, std::vector<Vec3>& pos,
+                      std::vector<Vec3>& nrm);
 };
 
 }  // namespace pmx

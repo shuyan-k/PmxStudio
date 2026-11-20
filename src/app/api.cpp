@@ -447,6 +447,32 @@ JsonValue settings_json(const Viewer& viewer) {
     pmx::json_set(out, "flesh_firmness", pmx::json_number(viewer.flesh_firmness));
     pmx::json_set(out, "flesh_region_bone", pmx::json_number(viewer.flesh_region_bone));
     pmx::json_set(out, "flesh_region_firmness", pmx::json_number(viewer.flesh_region_firmness));
+    pmx::json_set(out, "flesh_taper", pmx::json_number(viewer.flesh_taper));
+    pmx::json_set(out, "flesh_taper_reach", pmx::json_number(viewer.flesh_taper_reach));
+    pmx::json_set(out, "flesh_taper_falloff", pmx::json_number(viewer.flesh_taper_falloff));
+    pmx::json_set(out, "flesh_smooth", pmx::json_number(viewer.flesh_smooth));
+    pmx::json_set(out, "flesh_cache", pmx::json_bool(viewer.flesh_cache));
+    pmx::json_set(out, "flesh_colliders_visible", pmx::json_bool(viewer.flesh_colliders_visible));
+    {
+        pmx::JsonValue list = pmx::json_array();
+        for (const auto& c : viewer.flesh_colliders) {
+            pmx::JsonValue item = pmx::json_object();
+            pmx::json_set(item, "bone", pmx::json_number(c.bone));
+            pmx::json_set(item, "shape", pmx::json_number(c.shape));
+            pmx::json_set(item, "offset", vec3_json(c.offset));
+            pmx::json_set(item, "length", pmx::json_number(c.length));
+            pmx::json_set(item, "radius", pmx::json_number(c.radius));
+            pmx::json_set(item, "firmness", pmx::json_number(c.firmness));
+            pmx::json_push(list, std::move(item));
+        }
+        pmx::json_set(out, "flesh_colliders", std::move(list));
+    }
+    pmx::json_set(out, "flesh_cache_frames",
+                  pmx::json_number(viewer.renderer.flesh_cache_frames()));
+    pmx::json_set(out, "flesh_cache_bytes",
+                  pmx::json_number(static_cast<double>(viewer.renderer.flesh_cache_bytes())));
+    pmx::json_set(out, "flesh_cache_hits",
+                  pmx::json_number(viewer.renderer.flesh_cache_hits()));
     pmx::json_set(out, "camera_gizmo", pmx::json_bool(viewer.camera_gizmo));
     pmx::json_set(out, "ground", pmx::json_bool(viewer.ground));
     pmx::json_set(out, "physics_enabled", pmx::json_bool(viewer.physics_enabled));
@@ -567,6 +593,50 @@ void apply_settings(Viewer& viewer, const JsonValue& params) {
         viewer.flesh_region_firmness = std::clamp(
             optional_float(params, "flesh_region_firmness", viewer.flesh_region_firmness), 0.0f,
             1.0f);
+    if (has(params, "flesh_taper"))
+        viewer.flesh_taper =
+            std::clamp(optional_float(params, "flesh_taper", viewer.flesh_taper), 0.0f, 1.0f);
+    if (has(params, "flesh_taper_reach"))
+        viewer.flesh_taper_reach =
+            std::clamp(optional_float(params, "flesh_taper_reach", viewer.flesh_taper_reach),
+                       0.05f, 3.0f);
+    if (has(params, "flesh_taper_falloff"))
+        viewer.flesh_taper_falloff =
+            std::clamp(optional_float(params, "flesh_taper_falloff", viewer.flesh_taper_falloff),
+                       0.1f, 4.0f);
+    if (has(params, "flesh_smooth"))
+        viewer.flesh_smooth =
+            std::clamp(optional_float(params, "flesh_smooth", viewer.flesh_smooth), 0.0f, 0.9f);
+    set_bool("flesh_cache", viewer.flesh_cache);
+    set_bool("flesh_colliders_visible", viewer.flesh_colliders_visible);
+    if (const pmx::JsonValue* list = params.find("flesh_colliders");
+        list != nullptr && list->is_array()) {
+        viewer.flesh_colliders.clear();
+        for (const pmx::JsonValue& item : list->array) {
+            if (!item.is_object()) continue;
+            pmx::FleshColliderSpec c;
+            auto number = [&](const char* key, float fallback) {
+                const pmx::JsonValue* node = item.find(key);
+                return node != nullptr && node->is_number() ? static_cast<float>(node->number)
+                                                            : fallback;
+            };
+            c.bone = static_cast<int>(std::lround(number("bone", -1.0f)));
+            c.shape = number("shape", 0.0f) >= 0.5f ? 1 : 0;
+            if (const pmx::JsonValue* off = item.find("offset");
+                off != nullptr && off->is_array() && off->array.size() >= 3) {
+                float v[3] = {0.0f, 0.0f, 0.0f};
+                for (int k = 0; k < 3; ++k)
+                    if (off->array[static_cast<std::size_t>(k)].is_number())
+                        v[k] = static_cast<float>(
+                            off->array[static_cast<std::size_t>(k)].number);
+                c.offset = {v[0], v[1], v[2]};
+            }
+            c.length = std::max(0.0f, number("length", 0.0f));
+            c.radius = std::max(0.001f, number("radius", 0.5f));
+            c.firmness = std::clamp(number("firmness", 0.0f), 0.0f, 1.0f);
+            viewer.flesh_colliders.push_back(c);
+        }
+    }
 
     if (has(params, "bg_follow_theme")) {
         viewer.bg_custom = !optional_bool(params, "bg_follow_theme", !viewer.bg_custom);
@@ -632,14 +702,25 @@ pmx::RenderSettings render_settings(const Viewer& viewer, bool overlays) {
     settings.shadow_strength = viewer.shadow_strength;
     settings.shadow_softness = viewer.shadow_softness;
     settings.shadow_ground = viewer.shadow_ground;
-    settings.flesh = viewer.flesh;
-    settings.flesh_range = viewer.flesh_range;
-    settings.flesh_dent = viewer.flesh_dent;
-    settings.flesh_bulge = viewer.flesh_bulge;
-    settings.flesh_width = viewer.flesh_width;
-    settings.flesh_firmness = viewer.flesh_firmness;
-    settings.flesh_region_bone = viewer.flesh_region_bone;
-    settings.flesh_region_firmness = viewer.flesh_region_firmness;
+    {
+        const pmx::RenderSettings flesh = viewer.flesh_render_settings();
+        settings.flesh = flesh.flesh;
+        settings.flesh_range = flesh.flesh_range;
+        settings.flesh_dent = flesh.flesh_dent;
+        settings.flesh_bulge = flesh.flesh_bulge;
+        settings.flesh_width = flesh.flesh_width;
+        settings.flesh_firmness = flesh.flesh_firmness;
+        settings.flesh_region_bone = flesh.flesh_region_bone;
+        settings.flesh_region_firmness = flesh.flesh_region_firmness;
+        settings.flesh_taper = flesh.flesh_taper;
+        settings.flesh_taper_reach = flesh.flesh_taper_reach;
+        settings.flesh_taper_falloff = flesh.flesh_taper_falloff;
+        settings.flesh_colliders = flesh.flesh_colliders;
+        settings.show_flesh_colliders = flesh.show_flesh_colliders;
+        settings.flesh_cache = flesh.flesh_cache;
+        settings.flesh_smooth = flesh.flesh_smooth;
+        settings.flesh_frame = flesh.flesh_frame;
+    }
     settings.show_camera = false;
     return settings;
 }
@@ -1098,6 +1179,49 @@ JsonValue cmd_animation_play(Viewer& viewer, const JsonValue& params) {
     return animation_state(viewer);
 }
 
+JsonValue cmd_flesh_bake(Viewer& viewer, const JsonValue& params) {
+    if (!viewer.pose) throw ApiError{"尚未加载模型"};
+    if (!viewer.flesh) throw ApiError{"先启用肉体变形（scene.settings: flesh=true）"};
+    if (!viewer.preview_mode) viewer.set_preview_mode(true);
+    int motion_end = 0;
+    if (viewer.timeline.clip) motion_end = viewer.timeline.model_max_frame();
+    else if (viewer.motion) motion_end = std::max(0, viewer.motion->max_frame);
+    const int start =
+        std::max(0, static_cast<int>(std::lround(optional_float(params, "start", 0.0f))));
+    const int end = static_cast<int>(
+        std::lround(optional_float(params, "end", static_cast<float>(motion_end))));
+    const int step =
+        std::max(1, static_cast<int>(std::lround(optional_float(params, "step", 1.0f))));
+    if (end < start) throw ApiError{"end 必须不小于 start"};
+    if ((end - start) / step > 5000) throw ApiError{"烘焙帧数过多（上限 5000）"};
+    viewer.motion_playing = false;
+    std::string error;
+    int baked = 0;
+    for (int frame = start; frame <= end; frame += step) {
+        if (!viewer.bake_flesh_frame(frame, &error))
+            throw ApiError{error.empty() ? std::string("烘焙失败") : error};
+        ++baked;
+    }
+    // 回到烘焙起点，避免把最后一帧姿态留在视口里。
+    viewer.motion_frame = static_cast<float>(start);
+    viewer.apply_motion_frame();
+    if (viewer.morph_dirty) viewer.apply_morphs();
+    viewer.pose->apply(&viewer.morph_weights);
+    viewer.pose->solve_ik();
+    viewer.pose->world();
+    JsonValue out = pmx::json_object();
+    pmx::json_set(out, "start", pmx::json_number(start));
+    pmx::json_set(out, "end", pmx::json_number(end));
+    pmx::json_set(out, "step", pmx::json_number(step));
+    pmx::json_set(out, "baked", pmx::json_number(baked));
+    pmx::json_set(out, "cache_frames",
+                  pmx::json_number(viewer.renderer.flesh_cache_frames()));
+    pmx::json_set(
+        out, "cache_bytes",
+        pmx::json_number(static_cast<double>(viewer.renderer.flesh_cache_bytes())));
+    return out;
+}
+
 JsonValue dispatch(Viewer& viewer, const std::string& method, const JsonValue& params) {
     if (method == "system.ping") {
         JsonValue out = pmx::json_object();
@@ -1168,6 +1292,12 @@ JsonValue dispatch(Viewer& viewer, const std::string& method, const JsonValue& p
     if (method == "animation.load") return cmd_animation_load(viewer, params);
     if (method == "animation.play") return cmd_animation_play(viewer, params);
     if (method == "animation.state") return animation_state(viewer);
+
+    if (method == "flesh.bake") return cmd_flesh_bake(viewer, params);
+    if (method == "flesh.clear_cache") {
+        viewer.renderer.clear_flesh_cache();
+        return settings_json(viewer);
+    }
 
     if (method == "bone.list") return cmd_bone_list(viewer, params);
     if (method == "bone.pose") return cmd_bone_pose(viewer, params);
