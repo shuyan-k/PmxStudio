@@ -149,6 +149,8 @@ bool Viewer::load_model(const std::string& path, std::string* err) {
         return false;
     }
     pose = std::make_unique<pmx::Pose>(model);
+    // 换模型后重建骨骼显示分类（手动覆盖随旧模型一起丢弃）。
+    refresh_bone_categories(true);
     // 换模型后附件的锚点骨骼索引失效，直接清掉（含自带骨骼 / 物理运行时）。
     accessory = pmx::Model{};
     accessory_base = pmx::Model{};
@@ -292,10 +294,11 @@ pmx::Selection Viewer::pick_at(float sx, float sy, int fb_w, int fb_h, int kinds
     if (!show_rigid) kinds &= ~pmx::PICK_RIGID;
     if (!show_joints) kinds &= ~pmx::PICK_JOINT;
     if (kinds == 0) return pmx::Selection{};
+    const std::vector<std::uint8_t>* mask = bone_visible.empty() ? nullptr : &bone_visible;
     return renderer.pick(model, *pose, physics_ptr, camera.view(),
                          camera.projection(static_cast<float>(fb_w) /
                                            static_cast<float>(std::max(1, fb_h))),
-                         fb_w, fb_h, sx, sy, 12.0f, kinds);
+                         fb_w, fb_h, sx, sy, 12.0f, kinds, mask);
 }
 
 std::vector<pmx::Selection> Viewer::pick_candidates_at(float sx, float sy, int fb_w, int fb_h,
@@ -305,10 +308,11 @@ std::vector<pmx::Selection> Viewer::pick_candidates_at(float sx, float sy, int f
     if (!show_rigid) kinds &= ~pmx::PICK_RIGID;
     if (!show_joints) kinds &= ~pmx::PICK_JOINT;
     if (kinds == 0) return {};
+    const std::vector<std::uint8_t>* mask = bone_visible.empty() ? nullptr : &bone_visible;
     return renderer.pick_candidates(
         model, *pose, physics_ptr, camera.view(),
         camera.projection(static_cast<float>(fb_w) / static_cast<float>(std::max(1, fb_h))), fb_w,
-        fb_h, sx, sy, 12.0f, kinds);
+        fb_h, sx, sy, 12.0f, kinds, mask);
 }
 
 void Viewer::apply_pick(const pmx::Selection& hit) {
@@ -881,7 +885,18 @@ void Viewer::draw_ui() {
                 set_preview_mode(!preview_mode);
             ImGui::Separator();
             ImGui::MenuItem("模型网格", nullptr, &show_mesh);
-            ImGui::MenuItem("骨骼", nullptr, &show_bones);
+            if (ImGui::BeginMenu("骨骼")) {
+                ImGui::MenuItem("显示骨骼", nullptr, &show_bones);
+                ImGui::Separator();
+                ImGui::TextDisabled("按分类显示");
+                for (int c = 0; c < pmx::kBoneCategoryCount; ++c) {
+                    bool on = bone_category_visible[static_cast<std::size_t>(c)];
+                    if (ImGui::MenuItem(pmx::bone_category_name(static_cast<pmx::BoneCategory>(c)),
+                                        nullptr, &on))
+                        set_bone_category_visible(c, on);
+                }
+                ImGui::EndMenu();
+            }
             ImGui::MenuItem("刚体", nullptr, &show_rigid);
             ImGui::MenuItem("关节", nullptr, &show_joints);
             ImGui::MenuItem("地面网格", nullptr, &grid);
@@ -1201,6 +1216,7 @@ void Viewer::draw_scene(int fb_w, int fb_h) {
     settings.show_bones = show_bones;
     settings.show_rigid = show_rigid;
     settings.show_joints = show_joints;
+    settings.bone_visible = bone_visible;
     settings.use_gpu_skinning = use_gpu;
     settings.wireframe = wireframe;
     settings.grid = grid;

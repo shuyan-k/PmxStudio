@@ -157,6 +157,36 @@ void panel_bone(Viewer& v) {
         return;
     }
 
+    // ------------------------------------------------------------ 显示分类
+    ImGui::SeparatorText("显示分类");
+    if (v.bone_category.size() != static_cast<std::size_t>(bone_count)) v.refresh_bone_categories();
+    {
+        int counts[pmx::kBoneCategoryCount] = {};
+        for (const pmx::BoneCategory c : v.bone_category) {
+            const int i = static_cast<int>(c);
+            if (i >= 0 && i < pmx::kBoneCategoryCount) ++counts[i];
+        }
+        if (ImGui::SmallButton("全部显示")) {
+            for (int c = 0; c < pmx::kBoneCategoryCount; ++c) v.set_bone_category_visible(c, true);
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("全部隐藏")) {
+            for (int c = 0; c < pmx::kBoneCategoryCount; ++c) v.set_bone_category_visible(c, false);
+        }
+        if (ImGui::BeginTable("##bone_categories", 2, ImGuiTableFlags_SizingStretchSame)) {
+            for (int c = 0; c < pmx::kBoneCategoryCount; ++c) {
+                ImGui::TableNextColumn();
+                char label[64];
+                std::snprintf(label, sizeof label, "%s (%d)##cat%d",
+                              pmx::bone_category_name(static_cast<pmx::BoneCategory>(c)), counts[c],
+                              c);
+                bool on = v.bone_category_visible[static_cast<std::size_t>(c)];
+                if (ImGui::Checkbox(label, &on)) v.set_bone_category_visible(c, on);
+            }
+            ImGui::EndTable();
+        }
+    }
+
     // ------------------------------------------------------------ 搜索 + 列表
     static char filter[128] = "";
     ImGui::SetNextItemWidth(-1.0f);
@@ -218,6 +248,26 @@ void panel_bone(Viewer& v) {
     ImGui::SeparatorText("基本");
     pmxui::name_fields(v, b.name, b.name_en, "bone", "bone", "重命名骨骼");
     pmxui::zh_line(pmx::NameKind::Bone, b.name, b.name_en);
+
+    {
+        const pmx::BoneCategory current =
+            idx < static_cast<int>(v.bone_category.size()) ? v.bone_category[idx]
+                                                           : pmx::BoneCategory::Other;
+        ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+        if (ImGui::BeginCombo("显示分类", pmx::bone_category_name(current))) {
+            for (int c = 0; c < pmx::kBoneCategoryCount; ++c) {
+                const auto cat = static_cast<pmx::BoneCategory>(c);
+                if (ImGui::Selectable(pmx::bone_category_name(cat), c == static_cast<int>(current)))
+                    v.set_bone_category(idx, cat, true);
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SetItemTooltip("只影响视口里按分类显示/隐藏，不写入 PMX");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("自动识别"))
+            v.set_bone_category(idx, pmx::classify_bone(b.name, b.name_en), false);
+        ImGui::SetItemTooltip("按骨骼名重新识别分类，恢复自动分类");
+    }
 
     {
         float pos[3] = {b.pos.x, b.pos.y, b.pos.z};
