@@ -920,10 +920,11 @@ bool SceneRenderer::build_shadow_map(std::string* error) {
     glBindTexture(glc::GL_TEXTURE_2D, shadow_tex_);
     glTexImage2D(glc::GL_TEXTURE_2D, 0, glc::GL_DEPTH_COMPONENT24, shadow_size_,
                  shadow_size_, 0, glc::GL_DEPTH_COMPONENT, glc::GL_FLOAT, nullptr);
+    // 线性过滤让 sampler2DShadow 自带 2×2 双线性比较，配合 5×5 PCF 边缘更平滑。
     glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_MIN_FILTER,
-                    static_cast<GLint>(glc::GL_NEAREST));
+                    static_cast<GLint>(glc::GL_LINEAR));
     glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_MAG_FILTER,
-                    static_cast<GLint>(glc::GL_NEAREST));
+                    static_cast<GLint>(glc::GL_LINEAR));
     glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_WRAP_S,
                     static_cast<GLint>(glc::GL_CLAMP_TO_EDGE));
     glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_WRAP_T,
@@ -948,8 +949,9 @@ bool SceneRenderer::build_shadow_map(std::string* error) {
 }
 
 void SceneRenderer::build_ground() {
-    // 与地面网格同尺寸的接影平面；不写深度，未遮挡处 discard，因此不影响现有画面。
-    const float e = 40.0f;
+    // 接收阴影的平面：不写深度，未遮挡处 discard，因此不影响现有画面。
+    // 面积远大于网格，模型偏离原点时投影仍能落在平面上。
+    const float e = 200.0f;
     const float verts[] = {-e, 0.0f, -e, e, 0.0f, -e, -e, 0.0f, e, e, 0.0f, e};
     glGenVertexArrays(1, &ground_vao_);
     glBindVertexArray(ground_vao_);
@@ -966,17 +968,54 @@ void SceneRenderer::update_light_matrix(const RenderSettings& settings) {
     Vec3 dir = settings.light_dir;
     if (length(dir) < 1e-6f) dir = Vec3{0.35f, 0.85f, 0.45f};
     dir = normalize(dir);
-    // 正交框覆盖模型包围球；沿光线方向后退两倍半径，近远裁剪面把整个球包住。
-    const float r = scene_radius_ * 1.2f + 0.5f;
-    const float dist = r * 2.0f + 1.0f;
-    const Vec3 eye = scene_center_ + dir * dist;
-    const Vec3 up = std::fabs(dir.y) > 0.99f ? Vec3{0.0f, 0.0f, 1.0f}
-                                             : Vec3{0.0f, 1.0f, 0.0f};
-    const Mat4 view = light_look_at(eye, scene_center_, up);
-    const Mat4 proj = orthographic(-r, r, -r, r, 0.05f, dist + r * 2.0f + 1.0f);
+    // 正交框必须同时覆盖模型和它落到地面的投影：只按模型包围球取景时，低角度
+    // 光的长影子会有一部分超出贴图范围，表现为“某个方向完全没有影子”。
+    // 这里把包围盒 8 个角连同它们沿光线到 y=0 的落点一起变换到光源空间取景。
+    const Vec3 fwd = -dir;  // 光线传播方向（光源 → 场景）
+    const Vec3 hint = std::fabs(dir.y) > 0.99f ? Vec3{0.0f, 0.0f, 1.0f}
+                                               : Vec3{0.0f, 1.0f, 0.0f};
+    const Vec3 right = normalize(cross(fwd, hint));
+    const Vec3 up = normalize(cross(right, fwd));
+
+    // 光线接近水平时地面投影会拉得非常长，限制在模型尺度的几倍内。
+    const float max_len = scene_radius_ * 6.0f + 1.0f;
+    float min_x = 1e30f, max_x = -1e30f;
+    float min_y = 1e30f, max_y = -1e30f;
+    float min_z = 1e30f, max_z = -1e30f;
+    auto add_point = [&](const Vec3& p) {
+        const float x = dot(p, right);
+        const float y = dot(p, up);
+        const float z = dot(p, fwd);
+        min_x = std::min(min_x, x);
+        max_x = std::max(max_x, x);
+        min_y = std::min(min_y, y);
+        max_y = std::max(max_y, y);
+        min_z = std::min(min_z, z);
+        max_z = std::max(max_z, z);
+    };
+    for (int i = 0; i < 8; ++i) {
+        const Vec3 p{(i & 1) ? scene_max_.x : scene_min_.x,
+                     (i & 2) ? scene_max_.y : scene_min_.y,
+                     (i & 4) ? scene_max_.z : scene_min_.z};
+        add_point(p);
+        // 沿光线落到 y=0：p + fwd * t，t = p.y / dir.y。
+        if (p.y > 0.0f && dir.y > 0.05f) {
+            const float t = std::min(p.y / dir.y, max_len);
+            add_point(p + fwd * t);
+        }
+    }
+
+    const Vec3 center = right * (0.5f * (min_x + max_x)) + up * (0.5f * (min_y + max_y)) +
+                        fwd * (0.5f * (min_z + max_z));
+    const float half = std::max(0.5f, 0.5f * std::max(max_x - min_x, max_y - min_y) * 1.05f);
+    const float depth = std::max(0.5f, max_z - min_z);
+    const Vec3 eye = center + dir * (depth * 0.5f + half + 1.0f);
+    const Mat4 view = light_look_at(eye, center, up);
+    const Mat4 proj =
+        orthographic(-half, half, -half, half, 0.05f, depth + half * 2.0f + 2.0f);
     light_view_proj_ = mul(proj, view);
     // 一个阴影纹素在世界空间的大小；片元着色器用它做法线偏移（约 2 个纹素）。
-    shadow_bias_ = 2.0f * r / static_cast<float>(shadow_size_) * 2.0f;
+    shadow_bias_ = 2.0f * half / static_cast<float>(shadow_size_) * 2.0f;
 }
 
 void SceneRenderer::draw_shadow_map(const Model& model, const RenderSettings& settings) {
@@ -1030,7 +1069,10 @@ void SceneRenderer::draw_shadow_map(const Model& model, const RenderSettings& se
 
 void SceneRenderer::draw_ground_shadow(const RenderSettings& settings, const Mat4& vp) {
     glEnable(glc::GL_BLEND);
-    glBlendFunc(glc::GL_SRC_ALPHA, glc::GL_ONE_MINUS_SRC_ALPHA);
+    // 只混合颜色，保持目标 alpha 不变：地面接影是画面效果，不应把导出 PNG
+    // 的底色变半透明。
+    glBlendFuncSeparate(glc::GL_SRC_ALPHA, glc::GL_ONE_MINUS_SRC_ALPHA, glc::GL_ZERO,
+                        glc::GL_ONE);
     glDepthMask(glc::GL_FALSE);
     glDisable(glc::GL_CULL_FACE);
 
@@ -1091,6 +1133,8 @@ bool SceneRenderer::upload_model(const Model& model, std::string* error) {
         hi.x = std::max(hi.x, p.x); hi.y = std::max(hi.y, p.y); hi.z = std::max(hi.z, p.z);
     }
     scene_center_ = (lo + hi) * 0.5f;
+    scene_min_ = lo;
+    scene_max_ = hi;
     float radius = 0.0f;
     for (const Vec3& p : model.vertices.pos) radius = std::max(radius, length(p - scene_center_));
     scene_radius_ = std::max(radius, 1.0f);
