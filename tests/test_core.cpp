@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "core/flesh.hpp"
 #include "core/fs.hpp"
 #include "core/morph.hpp"
 #include "core/pmx.hpp"
@@ -514,6 +515,82 @@ void test_utf8_paths(const pmx::Model& model, const std::filesystem::path& dir) 
     check(resolved.find("/tex/a.png") != std::string::npos, "纹理解析替换反斜杠");
 }
 
+// ---------------------------------------------------------------- 肉体变形
+void test_flesh() {
+    std::printf("[9] 接触式肉体变形\n");
+    pmx::Model m;
+    const int grid = 5;
+    const float spacing = 0.25f;
+    // 两张面对面、相距 0.05 的 5×5 网格，模拟折叠后贴在一起的两块表面。
+    auto add_sheet = [&](float z, float nz) {
+        const int base = static_cast<int>(m.vertices.pos.size());
+        for (int y = 0; y < grid; ++y) {
+            for (int x = 0; x < grid; ++x) {
+                m.vertices.pos.push_back({x * spacing, y * spacing, z});
+                m.vertices.nrm.push_back({0.0f, 0.0f, nz});
+                m.vertices.uv.push_back({0.0f, 0.0f});
+                m.vertices.wtype.push_back(pmx::WT_BDEF1);
+                m.vertices.bones.push_back({0, 0, 0, 0});
+                m.vertices.weights.push_back({1.0f, 0.0f, 0.0f, 0.0f});
+            }
+        }
+        for (int y = 0; y + 1 < grid; ++y) {
+            for (int x = 0; x + 1 < grid; ++x) {
+                const int i0 = base + y * grid + x;
+                const int i1 = i0 + 1;
+                const int i2 = i0 + grid;
+                const int i3 = i2 + 1;
+                m.indices.insert(m.indices.end(),
+                                 {static_cast<std::uint32_t>(i0), static_cast<std::uint32_t>(i1),
+                                  static_cast<std::uint32_t>(i2), static_cast<std::uint32_t>(i1),
+                                  static_cast<std::uint32_t>(i3), static_cast<std::uint32_t>(i2)});
+            }
+        }
+    };
+    add_sheet(0.0f, 1.0f);
+    add_sheet(0.05f, -1.0f);
+
+    pmx::FleshSolver solver;
+    solver.reset(m);
+    check(solver.valid(), "焊接拓扑有效");
+    check_near(solver.height(), 1.0, 1e-5, "身高取竖直包围盒");
+
+    pmx::FleshParams params;
+    params.range = 0.1f;  // 身高 1.0 → 接触距离 0.1
+    params.dent = 0.6f;
+    params.bulge = 0.0f;
+
+    auto pos = m.vertices.pos;
+    auto nrm = m.vertices.nrm;
+    solver.apply(pos, nrm, params);
+    check(pos[0].z < -1e-3f, "法线 +Z 的表面被压入");
+    check(pos[static_cast<std::size_t>(grid * grid)].z > 0.05f + 1e-3f,
+          "法线 -Z 的表面被压入");
+
+    bool normals_ok = true;
+    for (const pmx::Vec3& n : nrm) {
+        const float len = pmx::length(n);
+        if (!std::isfinite(len) || std::fabs(len - 1.0f) > 1e-3f) normals_ok = false;
+    }
+    check(normals_ok, "形变后法线归一化");
+
+    // 硬度 1 / 区域硬度 1 都不应该产生位移。
+    pmx::FleshParams hard = params;
+    hard.firmness = 1.0f;
+    auto stiff = m.vertices.pos;
+    auto stiff_n = m.vertices.nrm;
+    solver.apply(stiff, stiff_n, hard);
+    check(max_abs_diff(stiff, m.vertices.pos) < 1e-6, "整体硬度 1 时不形变");
+
+    pmx::FleshParams region = params;
+    region.region_bone = 0;
+    region.region_firmness = 1.0f;
+    auto rigid_region = m.vertices.pos;
+    auto rigid_n = m.vertices.nrm;
+    solver.apply(rigid_region, rigid_n, region);
+    check(max_abs_diff(rigid_region, m.vertices.pos) < 1e-6, "区域硬度 1 时不形变");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -541,6 +618,7 @@ int main(int argc, char** argv) {
         test_pose(model);
         test_bone_morph(out.parent_path());
         test_skinning(model);
+        test_flesh();
         test_physics(model);
         test_vpd(model, out.parent_path());
         test_utf8_paths(model, out.parent_path());

@@ -103,6 +103,16 @@ struct Viewer {
     float shadow_softness = 1.0f;
     bool shadow_ground = true;
 
+    // 接触式肉体变形（第一阶段）：自接触凹陷 + 周边隆起，需 CPU 蒙皮。
+    bool flesh = false;
+    float flesh_range = 0.012f;
+    float flesh_dent = 0.60f;
+    float flesh_bulge = 1.0f;
+    float flesh_width = 3.0f;
+    float flesh_firmness = 0.0f;
+    int flesh_region_bone = -1;
+    float flesh_region_firmness = 0.7f;
+
     // VMD 模型动作（骨骼 / 形态 / IK）：导入后按 30 fps 时间轴播放；暂停时保留当前帧姿态。
     // 同一文件里的相机帧不放在这里，导入时拆进 camera_motion。
     std::unique_ptr<pmx::VmdMotion> motion;

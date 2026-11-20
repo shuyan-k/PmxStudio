@@ -439,6 +439,14 @@ JsonValue settings_json(const Viewer& viewer) {
     pmx::json_set(out, "shadow_strength", pmx::json_number(viewer.shadow_strength));
     pmx::json_set(out, "shadow_softness", pmx::json_number(viewer.shadow_softness));
     pmx::json_set(out, "shadow_ground", pmx::json_bool(viewer.shadow_ground));
+    pmx::json_set(out, "flesh", pmx::json_bool(viewer.flesh));
+    pmx::json_set(out, "flesh_range", pmx::json_number(viewer.flesh_range));
+    pmx::json_set(out, "flesh_dent", pmx::json_number(viewer.flesh_dent));
+    pmx::json_set(out, "flesh_bulge", pmx::json_number(viewer.flesh_bulge));
+    pmx::json_set(out, "flesh_width", pmx::json_number(viewer.flesh_width));
+    pmx::json_set(out, "flesh_firmness", pmx::json_number(viewer.flesh_firmness));
+    pmx::json_set(out, "flesh_region_bone", pmx::json_number(viewer.flesh_region_bone));
+    pmx::json_set(out, "flesh_region_firmness", pmx::json_number(viewer.flesh_region_firmness));
     pmx::json_set(out, "camera_gizmo", pmx::json_bool(viewer.camera_gizmo));
     pmx::json_set(out, "ground", pmx::json_bool(viewer.ground));
     pmx::json_set(out, "physics_enabled", pmx::json_bool(viewer.physics_enabled));
@@ -535,6 +543,30 @@ void apply_settings(Viewer& viewer, const JsonValue& params) {
                        3.0f);
     if (has(params, "shadow_ground"))
         viewer.shadow_ground = optional_bool(params, "shadow_ground", viewer.shadow_ground);
+    set_bool("flesh", viewer.flesh);
+    if (has(params, "flesh_range"))
+        viewer.flesh_range =
+            std::clamp(optional_float(params, "flesh_range", viewer.flesh_range), 0.001f, 0.08f);
+    if (has(params, "flesh_dent"))
+        viewer.flesh_dent =
+            std::clamp(optional_float(params, "flesh_dent", viewer.flesh_dent), 0.0f, 1.0f);
+    if (has(params, "flesh_bulge"))
+        viewer.flesh_bulge =
+            std::clamp(optional_float(params, "flesh_bulge", viewer.flesh_bulge), 0.0f, 2.0f);
+    if (has(params, "flesh_width"))
+        viewer.flesh_width =
+            std::clamp(optional_float(params, "flesh_width", viewer.flesh_width), 0.5f, 12.0f);
+    if (has(params, "flesh_firmness"))
+        viewer.flesh_firmness =
+            std::clamp(optional_float(params, "flesh_firmness", viewer.flesh_firmness), 0.0f, 1.0f);
+    if (has(params, "flesh_region_bone"))
+        viewer.flesh_region_bone =
+            static_cast<int>(std::lround(optional_float(params, "flesh_region_bone",
+                                                        static_cast<float>(viewer.flesh_region_bone))));
+    if (has(params, "flesh_region_firmness"))
+        viewer.flesh_region_firmness = std::clamp(
+            optional_float(params, "flesh_region_firmness", viewer.flesh_region_firmness), 0.0f,
+            1.0f);
 
     if (has(params, "bg_follow_theme")) {
         viewer.bg_custom = !optional_bool(params, "bg_follow_theme", !viewer.bg_custom);
@@ -600,6 +632,14 @@ pmx::RenderSettings render_settings(const Viewer& viewer, bool overlays) {
     settings.shadow_strength = viewer.shadow_strength;
     settings.shadow_softness = viewer.shadow_softness;
     settings.shadow_ground = viewer.shadow_ground;
+    settings.flesh = viewer.flesh;
+    settings.flesh_range = viewer.flesh_range;
+    settings.flesh_dent = viewer.flesh_dent;
+    settings.flesh_bulge = viewer.flesh_bulge;
+    settings.flesh_width = viewer.flesh_width;
+    settings.flesh_firmness = viewer.flesh_firmness;
+    settings.flesh_region_bone = viewer.flesh_region_bone;
+    settings.flesh_region_firmness = viewer.flesh_region_firmness;
     settings.show_camera = false;
     return settings;
 }
