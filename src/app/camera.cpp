@@ -69,8 +69,10 @@ void OrbitCamera::fit(Vec3 lo, Vec3 hi) {
     const Vec3 center = (lo + hi) * 0.5f;
     const float size = length(hi - lo);
     target = center;
-    distance = std::max(1.0f, size * 1.45f);
-    pitch = 0.16f;
+    // 略远的取景并保留俯角：模型站在 y=0 地面上时，投影落在脚边，
+    // 接近平视会把地面裁出画面，看起来就像“没有阴影”。
+    distance = std::max(1.0f, size * 1.9f);
+    pitch = 0.5f;
     yaw = kPi;
 }
 

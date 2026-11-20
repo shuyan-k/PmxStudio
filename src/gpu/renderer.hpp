@@ -226,6 +226,8 @@ private:
     float shadow_texel_ = 1.0f / 2048.0f;
     float shadow_bias_ = 0.05f;
     Vec3 scene_center_{0.0f, 8.0f, 0.0f};
+    Vec3 scene_min_{-4.0f, 0.0f, -4.0f};
+    Vec3 scene_max_{4.0f, 16.0f, 4.0f};
     float scene_radius_ = 20.0f;
     GLuint ground_vao_ = 0;
     GLuint ground_vbo_ = 0;

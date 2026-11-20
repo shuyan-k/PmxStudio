@@ -72,7 +72,7 @@ void panel_light(Viewer& v) {
     // ------------------------------------------------------------ 阴影
     ImGui::SeparatorText("阴影");
     ImGui::Checkbox("启用方向光阴影##shadows", &v.shadows);
-    ImGui::SetItemTooltip("2048² 深度贴图 + 3×3 PCF；关闭后回到纯卡通明暗，没有投影");
+    ImGui::SetItemTooltip("2048² 深度贴图 + 5×5 PCF；关闭后回到纯卡通明暗，没有投影");
     if (v.shadows) {
         ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
         ImGui::SliderFloat("强度##shadow_strength", &v.shadow_strength, 0.0f, 1.0f, "%.2f");
