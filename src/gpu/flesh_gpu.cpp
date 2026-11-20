@@ -360,7 +360,9 @@ void main() {
                 int bucket = int(cell_hash(lo, hi, uTriMask));
                 uint node = grid[uTriHead + bucket];
                 uint guard = 0u;
-                while (node != 0u && guard < 1024u) {
+                // 上限取池容量：任何桶的链长都不可能超过总条目数，
+                // 既能保证与 CPU 的遍历结果一致，又能防止异常数据死循环。
+                while (node != 0u && guard < uint(uTriCap)) {
                     int base = uTriPool + int(node - 1u) * 4;
                     uint tid = grid[base];
                     uint next = grid[base + 1];
@@ -387,7 +389,14 @@ void main() {
                     vec3 d = p - closest;
                     float d2 = dot(d, d);
                     if (d2 >= r2) continue;
-                    float strength = 1.0 - sqrt(d2) / uRange;
+                    // 仅有间隙不算挤压：只有真正压到表面上的顶点才计入，
+                    // 否则衣物、头发和并拢的肢体在静止时也会被判定为接触，
+                    // 表现为全身膨胀/融化。允许一个很小的贴合带吸收浮点误差。
+                    float side = dot(d, tn);
+                    float gap_band = uRange * 0.1;
+                    if (side > gap_band) continue;
+                    float gate = clamp((gap_band - side) / gap_band, 0.0, 1.0);
+                    float strength = (1.0 - sqrt(d2) / uRange) * gate;
                     if (strength <= 0.0) continue;
 
                     atomic_max_positive(uContact, v, strength);
@@ -460,7 +469,7 @@ void main() {
                 int bucket = int(cell_hash(lo, hi, uContactMask));
                 uint node = grid[uContactHead + bucket];
                 uint guard = 0u;
-                while (node != 0u && guard < 1024u) {
+                while (node != 0u && guard < uint(uContactCap)) {
                     int base = uContactPool + int(node - 1u) * 4;
                     uint c = grid[base];
                     uint next = grid[base + 1];
@@ -469,8 +478,9 @@ void main() {
                     ++guard;
                     if (!same_cell || c == v) continue;
                     vec3 d = load3(uWeldPos, c) - p;
-                    float dist = length(d);
-                    if (dist < 1e-6 || dist >= taper_radius) continue;
+                    float d2 = dot(d, d);
+                    if (d2 < 1e-12 || d2 >= taper_radius * taper_radius) continue;
+                    float dist = sqrt(d2);
                     float w = load1(uContact, c) * (1.0 - dist * inv_taper);
                     if (w <= 0.0) continue;
                     dir += d * (w / dist);
@@ -514,7 +524,7 @@ void main() {
                 int bucket = int(cell_hash(lo, hi, uContactMask));
                 uint node = grid[uContactHead + bucket];
                 uint guard = 0u;
-                while (node != 0u && guard < 1024u) {
+                while (node != 0u && guard < uint(uContactCap)) {
                     int base = uContactPool + int(node - 1u) * 4;
                     uint c = grid[base];
                     uint next = grid[base + 1];
@@ -522,8 +532,10 @@ void main() {
                     node = next;
                     ++guard;
                     if (!same_cell) continue;
-                    float dist = length(load3(uWeldPos, c) - p);
-                    float t = 1.0 - dist / uBulgeRadius;
+                    vec3 d = load3(uWeldPos, c) - p;
+                    float d2 = dot(d, d);
+                    if (d2 >= uBulgeRadius * uBulgeRadius) continue;
+                    float t = 1.0 - sqrt(d2) / uBulgeRadius;
                     if (t <= 0.0) continue;
                     float src = load1(uContact, c) * (1.0 - load1(uTaper, c));
                     best = max(best, src * t * t);

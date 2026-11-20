@@ -333,15 +333,16 @@ void FleshSolver::apply(std::vector<Vec3>& pos, std::vector<Vec3>& nrm,
                         for (const int ti : it->second) {
                             const auto& tri = tris_[static_cast<std::size_t>(ti)];
                             if (tri[0] == v || tri[1] == v || tri[2] == v) continue;
+                            const Vec3 tn = tri_normal[static_cast<std::size_t>(ti)];
+                            if (length(tn) < 0.5f) continue;
+                            // 只认面对面挤压：顶点法线与三角形法线需大致相反。
+                            // 朝向筛选最便宜，放在共边检查之前。
+                            if (dot(wn[sv], tn) > -0.2f) continue;
                             // 共用边的相邻面是正常折痕，不当作自接触。
                             if (edges_.find(edge_key(v, tri[0])) != edges_.end() ||
                                 edges_.find(edge_key(v, tri[1])) != edges_.end() ||
                                 edges_.find(edge_key(v, tri[2])) != edges_.end())
                                 continue;
-                            const Vec3 tn = tri_normal[static_cast<std::size_t>(ti)];
-                            if (length(tn) < 0.5f) continue;
-                            // 只认面对面挤压：顶点法线与三角形法线需大致相反。
-                            if (dot(wn[sv], tn) > -0.2f) continue;
                             const Vec3 a = wp[static_cast<std::size_t>(tri[0])];
                             const Vec3 b = wp[static_cast<std::size_t>(tri[1])];
                             const Vec3 c = wp[static_cast<std::size_t>(tri[2])];
@@ -351,7 +352,15 @@ void FleshSolver::apply(std::vector<Vec3>& pos, std::vector<Vec3>& nrm,
                             const Vec3 d = p - closest;
                             const float d2 = dot(d, d);
                             if (d2 >= range * range) continue;
-                            const float strength = 1.0f - std::sqrt(d2) / range;
+                            // 仅有间隙不算挤压：只有真正压到表面上的顶点才计入，
+                            // 否则衣物、头发和并拢的肢体在静止时也会被判定为接触，
+                            // 表现为全身膨胀/融化。允许一个很小的贴合带吸收浮点误差。
+                            const float side = dot(d, tn);
+                            const float gap_band = range * 0.1f;
+                            if (side > gap_band) continue;
+                            const float gate =
+                                clampf((gap_band - side) / gap_band, 0.0f, 1.0f);
+                            const float strength = (1.0f - std::sqrt(d2) / range) * gate;
                             if (strength <= 0.0f) continue;
                             out_contact[sv] = std::max(out_contact[sv], strength);
                             const float depth =
@@ -444,8 +453,9 @@ void FleshSolver::apply(std::vector<Vec3>& pos, std::vector<Vec3>& nrm,
                             for (const int c : it->second) {
                                 if (c == v) continue;
                                 const Vec3 d = wp[static_cast<std::size_t>(c)] - p;
-                                const float dist = length(d);
-                                if (dist < 1e-6f || dist >= taper_radius) continue;
+                                const float d2 = dot(d, d);
+                                if (d2 < 1e-12f || d2 >= taper_radius * taper_radius) continue;
+                                const float dist = std::sqrt(d2);
                                 const float w =
                                     contact[static_cast<std::size_t>(c)] * (1.0f - dist * inv_taper);
                                 if (w <= 0.0f) continue;
@@ -486,8 +496,10 @@ void FleshSolver::apply(std::vector<Vec3>& pos, std::vector<Vec3>& nrm,
                         const auto it = contact_grid.find(cell_key(cx + dx, cy + dy, cz + dz));
                         if (it == contact_grid.end()) continue;
                         for (const int c : it->second) {
-                            const float dist = length(wp[static_cast<std::size_t>(c)] - p);
-                            const float t = 1.0f - dist / bulge_radius;
+                            const Vec3 d = wp[static_cast<std::size_t>(c)] - p;
+                            const float d2 = dot(d, d);
+                            if (d2 >= bulge_radius * bulge_radius) continue;
+                            const float t = 1.0f - std::sqrt(d2) * inv_bulge;
                             if (t <= 0.0f) continue;
                             const float src =
                                 contact[static_cast<std::size_t>(c)] *

@@ -1138,6 +1138,7 @@ void SceneRenderer::release_model() {
     flesh_solver_.clear();
     flesh_gpu_.clear();
     flesh_gpu_active_ = false;
+    flesh_pose_valid_ = false;
     clear_flesh_cache();
 }
 
@@ -1303,6 +1304,7 @@ bool SceneRenderer::upload_model(const Model& model, std::string* error) {
     if (!flesh_gpu_.reset(model, &flesh_err))
         std::fprintf(stderr, "[flesh-gpu] %s，将回退 CPU 求解\n", flesh_err.c_str());
     flesh_gpu_active_ = false;
+    flesh_pose_valid_ = false;
     clear_flesh_cache();
     return true;
 }
@@ -1499,6 +1501,21 @@ std::uint64_t SceneRenderer::flesh_param_key(
         h = hash_bytes(h, &cap, sizeof(cap));
     }
     h = hash_bytes(h, &base_hash_, sizeof(base_hash_));
+    return h;
+}
+
+std::uint64_t SceneRenderer::flesh_pose_key(const RenderSettings& settings,
+                                            std::uint64_t param_key) const {
+    std::uint64_t h = param_key;
+    h = hash_float(h, settings.flesh_smooth);
+    // 骨骼矩阵量化到 1e-5：物理 / IK 的微小抖动不应让静止缓存失效。
+    for (float v : skin_matrices_) {
+        const std::int64_t q =
+            std::isfinite(v)
+                ? static_cast<std::int64_t>(std::llround(static_cast<double>(v) * 100000.0))
+                : 0;
+        h = hash_bytes(h, &q, sizeof(q));
+    }
     return h;
 }
 
@@ -2040,40 +2057,59 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
         build_flesh_colliders(pose, settings, colliders);
         const std::uint64_t key = flesh_param_key(settings, colliders);
         bool done = upload_baked_flesh(settings, pose, key);
+        if (done) {
+            // 烘焙结果已覆盖 outPos/outNrm，不能再用上一帧的 GPU 解算结果。
+            flesh_pose_valid_ = false;
+        }
         if (!done && settings.flesh_gpu && flesh_gpu_available()) {
-            // GPU 肉体以 GPU 蒙皮结果为输入，即使关闭了「GPU 蒙皮」也要先跑一次。
-            dispatch_gpu_skin();
-            GpuFleshParams fp;
-            fp.range = settings.flesh_range;
-            fp.dent = settings.flesh_dent;
-            fp.bulge = settings.flesh_bulge;
-            fp.width = settings.flesh_width;
-            fp.firmness = settings.flesh_firmness;
-            fp.region_bone = settings.flesh_region_bone;
-            fp.region_firmness = settings.flesh_region_firmness;
-            fp.taper = settings.flesh_taper;
-            fp.taper_reach = settings.flesh_taper_reach;
-            fp.taper_falloff = settings.flesh_taper_falloff;
-            fp.smooth = settings.flesh_smooth;
-            fp.frame = settings.flesh_frame;
-            std::string flesh_err;
-            done = flesh_gpu_.solve(fp, colliders, key, model_.out_pos_ssbo,
-                                    model_.out_nrm_ssbo, &flesh_err);
-            if (done) {
+            const std::uint64_t pose_key = flesh_pose_key(settings, key);
+            if (flesh_pose_valid_ && pose_key == flesh_pose_key_) {
+                // 姿态与参数都没变：outPos/outNrm 仍是上一帧的解算结果，直接复用。
+                done = true;
                 flesh_gpu_active_ = true;
-                // 求解器把 binding 2 借去当空间哈希了，顶点着色器还要从 2 读 UV。
-                glBindBufferBase(glc::GL_SHADER_STORAGE_BUFFER, kBindingVerts, model_.vbo);
-                glBindBufferBase(glc::GL_SHADER_STORAGE_BUFFER, kBindingPos, model_.out_pos_ssbo);
-                glBindBufferBase(glc::GL_SHADER_STORAGE_BUFFER, kBindingNrm, model_.out_nrm_ssbo);
             } else {
-                std::fprintf(stderr, "[flesh-gpu] %s\n", flesh_err.c_str());
+                // GPU 肉体以 GPU 蒙皮结果为输入，即使关闭了「GPU 蒙皮」也要先跑一次。
+                dispatch_gpu_skin();
+                GpuFleshParams fp;
+                fp.range = settings.flesh_range;
+                fp.dent = settings.flesh_dent;
+                fp.bulge = settings.flesh_bulge;
+                fp.width = settings.flesh_width;
+                fp.firmness = settings.flesh_firmness;
+                fp.region_bone = settings.flesh_region_bone;
+                fp.region_firmness = settings.flesh_region_firmness;
+                fp.taper = settings.flesh_taper;
+                fp.taper_reach = settings.flesh_taper_reach;
+                fp.taper_falloff = settings.flesh_taper_falloff;
+                fp.smooth = settings.flesh_smooth;
+                fp.frame = settings.flesh_frame;
+                std::string flesh_err;
+                done = flesh_gpu_.solve(fp, colliders, key, model_.out_pos_ssbo,
+                                        model_.out_nrm_ssbo, &flesh_err);
+                if (done) {
+                    flesh_gpu_active_ = true;
+                    flesh_pose_key_ = pose_key;
+                    flesh_pose_valid_ = true;
+                    // 求解器把 binding 2 借去当空间哈希了，顶点着色器还要从 2 读 UV。
+                    glBindBufferBase(glc::GL_SHADER_STORAGE_BUFFER, kBindingVerts, model_.vbo);
+                    glBindBufferBase(glc::GL_SHADER_STORAGE_BUFFER, kBindingPos,
+                                     model_.out_pos_ssbo);
+                    glBindBufferBase(glc::GL_SHADER_STORAGE_BUFFER, kBindingNrm,
+                                     model_.out_nrm_ssbo);
+                } else {
+                    flesh_pose_valid_ = false;
+                    std::fprintf(stderr, "[flesh-gpu] %s\n", flesh_err.c_str());
+                }
             }
         }
-        if (!done) upload_cpu_skin_flesh(model, pose, settings);
-    } else if (settings.use_gpu_skinning) {
-        dispatch_gpu_skin();
+        if (!done) {
+            flesh_pose_valid_ = false;
+            upload_cpu_skin_flesh(model, pose, settings);
+        }
     } else {
-        upload_cpu_skin(model, pose);
+        flesh_pose_valid_ = false;
+        if (settings.use_gpu_skinning) dispatch_gpu_skin();
+        else upload_cpu_skin(model, pose);
     }
     if (!settings.flesh && settings.use_gpu_skinning && gpu_check_enabled_ && !gpu_checked_) {
         validate_gpu_skin(model, pose);
