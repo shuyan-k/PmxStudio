@@ -38,6 +38,25 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
+      - name: Debug flesh symbols
+        if: always()
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+            Select-Object -First 1
+          Get-ChildItem build -Recurse -Filter "flesh*.obj" | ForEach-Object {
+            Write-Output "=== $($_.FullName) $($_.Length) ==="
+            & $dumpbin.FullName /SYMBOLS $_.FullName |
+              Select-String -Pattern 'FleshSolver|reset@Flesh' | Select-Object -First 8
+          }
+          if (Test-Path "build\Release\pmx_core.lib") {
+            Write-Output "=== pmx_core.lib members ==="
+            & $dumpbin.FullName /LINKERMEMBER:1 "build\Release\pmx_core.lib" |
+              Select-String -Pattern 'flesh' | Select-Object -First 10
+          }
+
       - name: Run core tests
         run: build\Release\pmx_tests.exe
 
