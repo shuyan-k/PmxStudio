@@ -290,6 +290,9 @@ private:
     // GPU 求解器：静态拓扑只上传一次，逐帧只提交参数与碰撞体。
     GpuFleshSolver flesh_gpu_;
     bool flesh_gpu_active_ = false;
+    // 上一帧 GPU 解算的姿态指纹：静止时直接复用 outPos/outNrm，省掉整条流水线。
+    std::uint64_t flesh_pose_key_ = 0;
+    bool flesh_pose_valid_ = false;
 
     // 烘焙缓存：按整数帧保存蒙皮 + 肉体形变结果，以及该帧的骨骼世界矩阵
     // （用于识别手动改姿态 / 物理回写后缓存是否仍然有效）。
@@ -361,6 +364,8 @@ private:
     // 参数 + 静止坐标 + 碰撞体的指纹：缓存只在指纹一致时复用。
     std::uint64_t flesh_param_key(const RenderSettings& settings,
                                   const std::vector<FleshColliderShape>& colliders) const;
+    // 姿态指纹（量化后）：骨骼矩阵没变时 GPU 肉体结果无需重算。
+    std::uint64_t flesh_pose_key(const RenderSettings& settings, std::uint64_t param_key) const;
     // 尝试用相邻两个烘焙帧插值上传；成功返回 true。
     bool upload_baked_flesh(const RenderSettings& settings, Pose& pose, std::uint64_t key);
     // 蒙皮 + 肉体解算（可选 Smooth Pops），供实时与烘焙共用。

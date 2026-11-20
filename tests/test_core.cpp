@@ -521,7 +521,7 @@ void test_flesh() {
     pmx::Model m;
     const int grid = 5;
     const float spacing = 0.25f;
-    // 两张面对面、相距 0.05 的 5×5 网格，模拟折叠后贴在一起的两块表面。
+    // 两张面对面、相距 0.005 的 5×5 网格，模拟压在一起的两块表面。
     auto add_sheet = [&](float z, float nz) {
         const int base = static_cast<int>(m.vertices.pos.size());
         for (int y = 0; y < grid; ++y) {
@@ -548,7 +548,7 @@ void test_flesh() {
         }
     };
     add_sheet(0.0f, 1.0f);
-    add_sheet(0.05f, -1.0f);
+    add_sheet(0.005f, -1.0f);
 
     pmx::FleshSolver solver;
     solver.reset(m);
@@ -564,7 +564,7 @@ void test_flesh() {
     auto nrm = m.vertices.nrm;
     solver.apply(pos, nrm, params);
     check(pos[0].z < -1e-3f, "法线 +Z 的表面被压入");
-    check(pos[static_cast<std::size_t>(grid * grid)].z > 0.05f + 1e-3f,
+    check(pos[static_cast<std::size_t>(grid * grid)].z > 0.005f + 1e-3f,
           "法线 -Z 的表面被压入");
 
     bool normals_ok = true;
@@ -590,12 +590,26 @@ void test_flesh() {
     solver.apply(rigid_region, rigid_n, region);
     check(max_abs_diff(rigid_region, m.vertices.pos) < 1e-6, "区域硬度 1 时不形变");
 
-    // 默认参数（接触距离 1.2% 身高）在这两块相距 5% 的面上不应产生任何形变。
+    // 默认参数（接触距离 1.2% 身高）在这两块相距 0.5% 的面上不应产生任何形变。
     pmx::FleshParams defaults;
     auto rest = m.vertices.pos;
     auto rest_n = m.vertices.nrm;
     solver.apply(rest, rest_n, defaults);
     check(max_abs_diff(rest, m.vertices.pos) < 1e-6, "默认参数静止姿态无形变");
+
+    // 只是靠近、并未压到表面：即使间隙小于接触距离也不应该形变。
+    // 否则衣物、头发和并拢的肢体在静止时都会被判为接触，表现为全身膨胀。
+    pmx::Model apart = m;
+    for (std::size_t i = static_cast<std::size_t>(grid * grid);
+         i < apart.vertices.pos.size(); ++i)
+        apart.vertices.pos[i].z += 0.045f;  // 两片间距 0.05
+    pmx::FleshSolver apart_solver;
+    apart_solver.reset(apart);
+    auto apart_pos = apart.vertices.pos;
+    auto apart_n = apart.vertices.nrm;
+    apart_solver.apply(apart_pos, apart_n, params);
+    check(max_abs_diff(apart_pos, apart.vertices.pos) < 1e-6,
+          "仅邻近未压入表面时不形变");
 
     // Corner Taper：只应该回收隆起，不应放大位移。
     pmx::FleshParams bumped = params;
@@ -643,7 +657,7 @@ void test_flesh() {
     collision.taper = 0.0f;
     collision.threads = 1;
     pmx::FleshColliderShape ball;
-    ball.a = {0.5f, 0.5f, 0.025f};
+    ball.a = {0.5f, 0.5f, 0.0025f};
     ball.radius = 0.15f;
     auto pushed = m.vertices.pos;
     auto pushed_n = m.vertices.nrm;
@@ -663,8 +677,8 @@ void test_flesh() {
 
     // 胶囊碰撞体：轴线经过下表面，靠近轴线的顶点被推开。
     pmx::FleshColliderShape capsule;
-    capsule.a = {0.25f, 0.0f, 0.025f};
-    capsule.b = {0.75f, 0.0f, 0.025f};
+    capsule.a = {0.25f, 0.0f, 0.0025f};
+    capsule.b = {0.75f, 0.0f, 0.0025f};
     capsule.radius = 0.1f;
     capsule.capsule = true;
     auto cap = m.vertices.pos;
