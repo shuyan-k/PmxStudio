@@ -30,6 +30,8 @@ public:
 
     bool build(const Model& model);
     void release();
+    // 模型对象地址变化（如场景容器前移）后重新绑定，物理数据本身无需重建。
+    void rebind_model(const Model& model) { model_ = &model; }
 
     bool enabled = false;
     float gravity = -9.8f;

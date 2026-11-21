@@ -15,7 +15,7 @@ inline bool same_vec(Vec3 a, Vec3 b) { return a.x == b.x && a.y == b.y && a.z ==
 
 }  // namespace
 
-Pose::Pose(const Model& model) : model_(model) {
+Pose::Pose(const Model& model) : model_(&model) {
     n = static_cast<int>(model.bones.size());
     parent.assign(n, -1);
     rest_off.resize(n);
@@ -156,9 +156,9 @@ void Pose::apply(const MorphWeights* morph_weights) {
     std::vector<Vec3> new_trans = base_trans;
     if (morph_weights) {
         for (const auto& [mi, weight] : *morph_weights) {
-            if (weight == 0.0f || mi < 0 || mi >= static_cast<int>(model_.morphs.size()))
+            if (weight == 0.0f || mi < 0 || mi >= static_cast<int>(model_->morphs.size()))
                 continue;
-            const Morph& mo = model_.morphs[static_cast<std::size_t>(mi)];
+            const Morph& mo = model_->morphs[static_cast<std::size_t>(mi)];
             if (mo.type != 2) continue;
             for (const MorphOffset& off : mo.offsets) {
                 if (off.bone < 0 || off.bone >= n) continue;
@@ -215,7 +215,7 @@ Mat4 Pose::local_matrix(int bone, const std::vector<Mat4>& W) const {
     const std::uint16_t flags = flags_[i];
     const int src = append_parent_[i];
     if ((flags & (BF_INHERIT_ROT | BF_INHERIT_MOV)) && src >= 0 && src < n && src != bone) {
-        const float ratio = model_.bones[i].append_ratio;
+        const float ratio = model_->bones[i].append_ratio;
         if (ratio != 0.0f) {
             if (flags & BF_INHERIT_ROT) {
                 Quat q_src;
@@ -239,7 +239,7 @@ Mat4 Pose::local_matrix(int bone, const std::vector<Mat4>& W) const {
                     Vec3 d_world = Vec3(W[static_cast<std::size_t>(src)].at(0, 3),
                                         W[static_cast<std::size_t>(src)].at(1, 3),
                                         W[static_cast<std::size_t>(src)].at(2, 3)) -
-                                   model_.bones[static_cast<std::size_t>(src)].pos;
+                                   model_->bones[static_cast<std::size_t>(src)].pos;
                     d = mul(transpose(upper3(Wp)), d_world) * ratio;
                 }
                 t_local += d;
@@ -362,7 +362,7 @@ std::unordered_set<int> Pose::active_ik_indices(int changed_bone) const {
     };
     std::vector<IkInfo> ik_bones;
     for (int i = 0; i < n; ++i) {
-        const Bone& b = model_.bones[static_cast<std::size_t>(i)];
+        const Bone& b = model_->bones[static_cast<std::size_t>(i)];
         if ((b.flags & BF_IK) && b.ik) ik_bones.push_back({i, &*b.ik});
     }
     while (true) {
@@ -407,7 +407,7 @@ int Pose::solve_ik_core(int max_loops, const std::unordered_set<int>* only) {
         if (only && !only->count(chain.ik_bone)) continue;
         const auto en = ik_enabled.find(chain.ik_bone);
         if (en != ik_enabled.end() && !en->second) continue;
-        const IK& ik = *model_.bones[static_cast<std::size_t>(chain.ik_bone)].ik;
+        const IK& ik = *model_->bones[static_cast<std::size_t>(chain.ik_bone)].ik;
         const int target = ik.target;
 
         // 足 IK 这类「大腿 + 单侧铰链膝」两骨骼链：先把膝弯到目标所需的夹角，再交给
@@ -575,7 +575,7 @@ int Pose::retry_stuck_chains(int max_loops, const std::unordered_set<int>* only)
     const Quat ident = identity_quat();
     for (const Chain& chain : chains_) {
         if (only && !only->count(chain.ik_bone)) continue;
-        const IK& ik = *model_.bones[static_cast<std::size_t>(chain.ik_bone)].ik;
+        const IK& ik = *model_->bones[static_cast<std::size_t>(chain.ik_bone)].ik;
         const int target = ik.target;
         const auto& W = world();
         Vec3 goal(W[static_cast<std::size_t>(chain.ik_bone)].at(0, 3),

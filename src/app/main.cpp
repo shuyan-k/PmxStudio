@@ -30,6 +30,7 @@
 #include <iterator>
 #include <memory>
 #include <new>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -1951,7 +1952,12 @@ static int run_viewer(const std::vector<std::string>& args) {
         return 1;
     }
 
-    Viewer viewer;
+    // 用 optional 持有 Viewer：主循环结束后要在 GL 上下文仍有效时显式销毁，
+    // 否则渲染器/着色器等成员的 GL 释放会落到 glfwTerminate() 之后（无上下文，
+    // Mesa 等实现会直接段错误）。
+    std::optional<Viewer> viewer_holder;
+    viewer_holder.emplace();
+    Viewer& viewer = *viewer_holder;
     glfwSetWindowUserPointer(window, &viewer);
     // 点窗口关闭按钮 / Alt+F4 时若模型有未保存修改，先拦下关闭请求并弹确认框。
     glfwSetWindowCloseCallback(window, [](GLFWwindow* w) {
@@ -2344,7 +2350,9 @@ static int run_viewer(const std::vector<std::string>& args) {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
-    viewer.renderer.release_model();
+    // 趁 GL 上下文还在，销毁整个 Viewer（含场景模型与所有渲染器对象）。
+    glfwSetWindowUserPointer(window, nullptr);
+    viewer_holder.reset();
     glfwDestroyWindow(window);
     glfwTerminate();
     return 0;

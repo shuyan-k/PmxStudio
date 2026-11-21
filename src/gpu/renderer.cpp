@@ -498,7 +498,11 @@ Mat4 light_look_at(Vec3 eye, Vec3 center, Vec3 up) {
 
 }  // namespace
 
-SceneRenderer::~SceneRenderer() {
+SceneRenderer::~SceneRenderer() { shutdown(); }
+
+void SceneRenderer::shutdown() {
+    if (shutdown_done_) return;
+    shutdown_done_ = true;
     release_model();
     // 模板/网格/实例缓冲只在 init 时创建一次，随渲染器一起销毁。
     auto drop = [](OverlayMesh& m) {
@@ -1152,7 +1156,7 @@ void SceneRenderer::release_model() {
     clear_flesh_cache();
 }
 
-bool SceneRenderer::upload_model(const Model& model, std::string* error) {
+bool SceneRenderer::upload_model(const Model& model, std::string* error) try {
     if (!ready_) {
         if (error) *error = "渲染器尚未初始化";
         return false;
@@ -1317,6 +1321,12 @@ bool SceneRenderer::upload_model(const Model& model, std::string* error) {
     flesh_pose_valid_ = false;
     clear_flesh_cache();
     return true;
+} catch (const std::bad_alloc&) {
+    // 顶点/索引/贴图数据分配失败：释放半成品并把错误交回调用方，
+    // 不能把 bad_alloc 抛进渲染/UI 主循环（未捕获异常会直接 terminate）。
+    release_model();
+    if (error) *error = "内存不足，无法上传模型（顶点或贴图过大）";
+    return false;
 }
 
 void SceneRenderer::update_base(const Model& model, const VertexMorphResult& morph) {
@@ -1840,22 +1850,29 @@ SceneRenderer::Texture& SceneRenderer::texture_from_path(const std::string& path
     if (path.empty()) return missing;
     auto it = textures_.find(path);
     if (it != textures_.end()) return it->second;
-    int w = 0, h = 0, comp = 0;
-    // PMX 的 UV 原点在左上角（DirectX 约定），stb 默认把首行作为纹理第 0 行，
-    // 正好对应 v=0，因此这里不能再做垂直翻转；翻转会让脸部/表情 UV 落到图集
-    // 的另一块区域（眼睛变成黑框、露出张嘴表情）。
-    stbi_set_flip_vertically_on_load(0);
-    // stbi_load 用 fopen 打开窄字符路径，中文/日文纹理目录会失败；先按 UTF-8 路径读入内存。
-    std::ifstream file = open_ifstream(path);
-    const std::string bytes((std::istreambuf_iterator<char>(file)),
-                            std::istreambuf_iterator<char>());
-    unsigned char* pixels =
-        bytes.empty() ? nullptr
-                      : stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(bytes.data()),
-                                              static_cast<int>(bytes.size()), &w, &h, &comp, 4);
-    Texture tex = make_texture(pixels, w, h, true);
-    if (pixels) stbi_image_free(pixels);
-    return textures_.emplace(path, tex).first->second;
+    try {
+        int w = 0, h = 0, comp = 0;
+        // PMX 的 UV 原点在左上角（DirectX 约定），stb 默认把首行作为纹理第 0 行，
+        // 正好对应 v=0，因此这里不能再做垂直翻转；翻转会让脸部/表情 UV 落到图集
+        // 的另一块区域（眼睛变成黑框、露出张嘴表情）。
+        stbi_set_flip_vertically_on_load(0);
+        // stbi_load 用 fopen 打开窄字符路径，中文/日文纹理目录会失败；先按 UTF-8 路径读入内存。
+        std::ifstream file = open_ifstream(path);
+        const std::string bytes((std::istreambuf_iterator<char>(file)),
+                                std::istreambuf_iterator<char>());
+        unsigned char* pixels =
+            bytes.empty()
+                ? nullptr
+                : stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(bytes.data()),
+                                        static_cast<int>(bytes.size()), &w, &h, &comp, 4);
+        Texture tex = make_texture(pixels, w, h, true);
+        if (pixels) stbi_image_free(pixels);
+        return textures_.emplace(path, tex).first->second;
+    } catch (const std::bad_alloc&) {
+        // 贴图在首帧绘制时才解码，这里位于渲染循环内：内存不足时按无贴图处理，
+        // 下一帧会重试，但不会让异常冒出去终止进程。
+        return missing;
+    }
 }
 
 SceneRenderer::Texture& SceneRenderer::texture_for(const Model& model, int index) {

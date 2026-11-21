@@ -144,8 +144,13 @@ class SceneRenderer {
 public:
     SceneRenderer() = default;
     ~SceneRenderer();
+    SceneRenderer(const SceneRenderer&) = delete;
+    SceneRenderer& operator=(const SceneRenderer&) = delete;
 
     bool init(std::string* error);
+
+    // 在 GL 上下文仍然有效时释放全部 GPU 对象；析构时自动调用，可重复调用。
+    void shutdown();
 
     // 结构变化时重建 GPU 缓冲（顶点/索引/权重/纹理）。
     bool upload_model(const Model& model, std::string* error);
@@ -301,6 +306,7 @@ private:
     ShaderProgram shadow_program_;
     ShaderProgram ground_program_;
     bool ready_ = false;
+    bool shutdown_done_ = false;
 
     // 方向光阴影贴图与地面接影。shadow_size_ 固定 2048：对 MMD 模型尺寸足够，
     // 也不需要随窗口缩放重建。

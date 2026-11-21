@@ -85,6 +85,15 @@ bool Viewer::add_scene_model(const std::string& path, std::string* err) {
 void Viewer::remove_scene_model(int index) {
     if (index < 0 || index >= static_cast<int>(scene_models.size())) return;
     scene_models.erase(scene_models.begin() + index);
+    // deque 的 erase 会把后面的元素整体前移（model 数据跟着移动），
+    // 但 Pose / Physics 里保存的模型引用仍指向旧槽位，必须重新绑定，
+    // 否则后续渲染/物理会读到错位的模型数据，甚至访问已销毁的对象。
+    for (SceneModel& sm : scene_models) {
+        if (sm.pose) sm.pose->rebind_model(sm.model);
+#ifdef PMX_ENABLE_PHYSICS
+        if (sm.physics) sm.physics->rebind_model(sm.model);
+#endif
+    }
 }
 
 void Viewer::clear_scene_models() { scene_models.clear(); }

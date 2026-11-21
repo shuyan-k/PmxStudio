@@ -53,6 +53,9 @@ public:
     float ik_retry_tolerance = 0.05f;
     int ik_clamp_hits = 0;
 
+    // 模型对象地址变化（如容器前移）后重新绑定；内部数组与模型一一对应，无需重建。
+    void rebind_model(const Model& model) { model_ = &model; }
+
     void reset();
     // morph_weights 需先经 resolve_morph_weights 展开（组/翻转形态）。
     void apply(const MorphWeights* morph_weights = nullptr);
@@ -78,7 +81,7 @@ public:
     std::unordered_set<int> changed_subtrees(const std::unordered_set<int>& changed) const;
 
 private:
-    const Model& model_;
+    const Model* model_ = nullptr;
     std::vector<Mat4> world_;
     bool dirty_ = true;
     std::unordered_map<int, std::array<float, 3>> ik_euler_;
