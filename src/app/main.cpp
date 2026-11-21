@@ -1895,87 +1895,7 @@ static int run_viewer(const std::vector<std::string>& args) {
     std::string settings_err;
     pmxtheme::load_settings(viewer, &settings_err);
 
-    std::string err;
-    if (!viewer.renderer.init(&err)) {
-        report_error("渲染器初始化失败：" + err);
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        return 1;
-    }
-
-    std::string initial = viewer.model_path;
-    // 命令行选项：--api 启动 Agent API，--api-port N（或 --api-port=N）指定端口，
-    // --no-plugins 跳过插件加载；其余非选项参数视为模型路径。
-    bool api_enabled = false;
-    bool plugins_enabled = true;
-    int api_port = 8422;
-    std::string initial_arg;
-    for (std::size_t i = 1; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg == "--api") {
-            api_enabled = true;
-        } else if (arg == "--api-port") {
-            if (i + 1 < args.size()) api_port = std::atoi(args[++i].c_str());
-        } else if (arg.rfind("--api-port=", 0) == 0) {
-            api_port = std::atoi(arg.c_str() + std::strlen("--api-port="));
-        } else if (arg == "--no-plugins") {
-            plugins_enabled = false;
-        } else if (arg.size() > 1 && arg[0] == '-') {
-            // 未知选项忽略。
-        } else if (initial_arg.empty()) {
-            initial_arg = arg;
-        }
-    }
-    if (!initial_arg.empty()) initial = initial_arg;
-    if (initial.empty()) initial = "tests/test_model.pmx";
-    if (!viewer.load_model(initial, &err)) {
-        viewer.model_path = initial;
-        viewer.error = err;
-    }
-    viewer.fps_time = glfwGetTime();
-
-    // 插件宿主：命令通过 host->invoke 调用与 Agent API 相同的内置命令。
-    PluginManager plugins;
-    plugins.set_host_invoke(
-        [&viewer](const std::string& method, const std::string& params_json,
-                  std::string& result_json, std::string& error) {
-            pmx::JsonValue params;
-            try {
-                params = params_json.empty() ? pmx::json_object() : pmx::parse_json(params_json);
-            } catch (const pmx::ParseError& parse_error) {
-                error = std::string("参数 JSON 解析失败：") + parse_error.message;
-                return false;
-            }
-            pmx::JsonValue result;
-            if (!api_execute(viewer, method, params, result, error)) return false;
-            result_json = pmx::json_dump(result);
-            return true;
-        });
-    if (plugins_enabled) {
-        const int count = plugins.load_all();
-        if (count > 0)
-            std::fprintf(stderr, "PmxStudio: 已加载 %d 个插件\n", count);
-    }
-
-    // Agent API：本地 JSON-RPC，插件命令也通过同一张表分发。
-    ApiServer api;
-    api.set_plugin_hooks(
-        [&plugins]() { return plugins.describe(); },
-        [&plugins](const std::string& method, const std::string& params_json,
-                   std::string& result_json, std::string& error) {
-            return plugins.invoke(method, params_json, result_json, error);
-        });
-    if (api_enabled) {
-        std::string api_error;
-        if (!api.start(api_port, &api_error)) {
-            viewer.error = api_error;
-            std::fprintf(stderr, "PmxStudio: 启动 Agent API 失败：%s\n", api_error.c_str());
-        } else {
-            std::printf("PmxStudio Agent API: 127.0.0.1:%d\n", api.port());
-            std::fflush(stdout);
-        }
-    }
-
+    // ImGui 提前初始化：启动画面要在着色器编译、模型解析之前就能画出来。
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -2015,6 +1935,157 @@ static int run_viewer(const std::vector<std::string>& args) {
     }
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 460");
+
+    // ---- 启动画面
+    // 窗口在首帧之前就可见，而着色器编译、PMX 解析、物理构建、插件扫描都是同步的；
+    // 每个耗时阶段前先画一张居中加载卡片，避免用户长时间只看到空白窗口。
+    const double splash_begin = glfwGetTime();
+    auto present_splash = [&](const char* status, float progress) {
+        glfwPollEvents();
+        int sw = 0, sh = 0;
+        glfwGetFramebufferSize(window, &sw, &sh);
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        auto centered = [](const char* text) {
+            const float w = ImGui::CalcTextSize(text).x;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                                 (ImGui::GetContentRegionAvail().x - w) * 0.5f);
+            ImGui::TextUnformatted(text);
+        };
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(
+            ImVec2(pmxui::scale(460.0f), pmxui::scale(220.0f)), ImGuiCond_Always);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, pmxui::scale(12.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::Begin("##startup_splash", nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
+                         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                         ImGuiWindowFlags_NoNav |
+                         ImGuiWindowFlags_NoBringToFrontOnFocus);
+        ImGui::Dummy(ImVec2(0.0f, pmxui::scale(28.0f)));
+        ImGui::PushStyleColor(ImGuiCol_Text, pmxtheme::accent());
+        ImGui::PushFont(nullptr, 32.0f);
+        centered("PmxStudio");
+        ImGui::PopFont();
+        ImGui::PopStyleColor();
+        ImGui::PushFont(nullptr, 14.0f);
+        centered("PMX 模型查看与出片工具  v" PMXSTUDIO_VERSION);
+        ImGui::PopFont();
+        ImGui::Dummy(ImVec2(0.0f, pmxui::scale(22.0f)));
+        centered(status);
+        ImGui::Dummy(ImVec2(0.0f, pmxui::scale(12.0f)));
+        ImGui::ProgressBar(progress,
+                           ImVec2(ImGui::GetContentRegionAvail().x, pmxui::scale(6.0f)),
+                           "");
+        ImGui::Dummy(ImVec2(0.0f, pmxui::scale(10.0f)));
+        ImGui::End();
+        ImGui::PopStyleVar(2);
+
+        ImGui::Render();
+        glViewport(0, 0, sw, sh);
+        glClearColor(viewer.bg[0], viewer.bg[1], viewer.bg[2], 1.0f);
+        glClear(glc::GL_COLOR_BUFFER_BIT);
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        glfwSwapBuffers(window);
+    };
+
+    std::string err;
+    present_splash("正在初始化渲染器…", 0.10f);
+    if (!viewer.renderer.init(&err)) {
+        report_error("渲染器初始化失败：" + err);
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
+
+    std::string initial = viewer.model_path;
+    // 命令行选项：--api 启动 Agent API，--api-port N（或 --api-port=N）指定端口，
+    // --no-plugins 跳过插件加载；其余非选项参数视为模型路径。
+    bool api_enabled = false;
+    bool plugins_enabled = true;
+    int api_port = 8422;
+    std::string initial_arg;
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg == "--api") {
+            api_enabled = true;
+        } else if (arg == "--api-port") {
+            if (i + 1 < args.size()) api_port = std::atoi(args[++i].c_str());
+        } else if (arg.rfind("--api-port=", 0) == 0) {
+            api_port = std::atoi(arg.c_str() + std::strlen("--api-port="));
+        } else if (arg == "--no-plugins") {
+            plugins_enabled = false;
+        } else if (arg.size() > 1 && arg[0] == '-') {
+            // 未知选项忽略。
+        } else if (initial_arg.empty()) {
+            initial_arg = arg;
+        }
+    }
+    if (!initial_arg.empty()) initial = initial_arg;
+    if (initial.empty()) initial = "tests/test_model.pmx";
+    present_splash("正在加载模型…", 0.35f);
+    if (!viewer.load_model(initial, &err)) {
+        viewer.model_path = initial;
+        viewer.error = err;
+    }
+    viewer.fps_time = glfwGetTime();
+
+    // 插件宿主：命令通过 host->invoke 调用与 Agent API 相同的内置命令。
+    PluginManager plugins;
+    plugins.set_host_invoke(
+        [&viewer](const std::string& method, const std::string& params_json,
+                  std::string& result_json, std::string& error) {
+            pmx::JsonValue params;
+            try {
+                params = params_json.empty() ? pmx::json_object() : pmx::parse_json(params_json);
+            } catch (const pmx::ParseError& parse_error) {
+                error = std::string("参数 JSON 解析失败：") + parse_error.message;
+                return false;
+            }
+            pmx::JsonValue result;
+            if (!api_execute(viewer, method, params, result, error)) return false;
+            result_json = pmx::json_dump(result);
+            return true;
+        });
+    if (plugins_enabled) {
+        present_splash("正在扫描插件…", 0.75f);
+        const int count = plugins.load_all();
+        if (count > 0)
+            std::fprintf(stderr, "PmxStudio: 已加载 %d 个插件\n", count);
+    }
+
+    // Agent API：本地 JSON-RPC，插件命令也通过同一张表分发。
+    ApiServer api;
+    api.set_plugin_hooks(
+        [&plugins]() { return plugins.describe(); },
+        [&plugins](const std::string& method, const std::string& params_json,
+                   std::string& result_json, std::string& error) {
+            return plugins.invoke(method, params_json, result_json, error);
+        });
+    if (api_enabled) {
+        present_splash("正在启动 Agent API…", 0.90f);
+        std::string api_error;
+        if (!api.start(api_port, &api_error)) {
+            viewer.error = api_error;
+            std::fprintf(stderr, "PmxStudio: 启动 Agent API 失败：%s\n", api_error.c_str());
+        } else {
+            std::printf("PmxStudio Agent API: 127.0.0.1:%d\n", api.port());
+            std::fflush(stdout);
+        }
+    }
+
+    // 加载完成后至少让启动画面停留 0.4 秒，避免小模型一闪而过。
+    present_splash("正在准备界面…", 1.0f);
+    while (glfwGetTime() - splash_begin < 0.4) {
+        glfwWaitEventsTimeout(0.02);
+        present_splash("正在准备界面…", 1.0f);
+    }
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
