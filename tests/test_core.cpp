@@ -10,6 +10,7 @@
 #include "core/bone_category.hpp"
 #include "core/flesh.hpp"
 #include "core/fs.hpp"
+#include "core/math.hpp"
 #include "core/morph.hpp"
 #include "core/pmx.hpp"
 #include "core/pose.hpp"
@@ -257,6 +258,24 @@ void test_bone_category() {
     check(pmx::classify_bone("", "sword") == BoneCategory::Prop, "僅英文名也能分類");
     check(pmx::classify_bone("unknown_thing", "") == BoneCategory::Other, "未知分類");
     check(pmx::classify_bone("", "") == BoneCategory::Other, "空名分類");
+}
+
+void test_orthographic() {
+    // 行主序：平移在最后一列，w 行必须是 (0,0,0,1)。写成 m[12..14] 会让阴影
+    // 投影被错误透视除法，斜向光下地面阴影几乎消失。
+    const pmx::Mat4 p = pmx::orthographic(-4.0f, 4.0f, -2.0f, 2.0f, 1.0f, 11.0f);
+    check_near(p.at(3, 0), 0.0, 1e-6, "正交矩阵 w.x 为 0");
+    check_near(p.at(3, 1), 0.0, 1e-6, "正交矩阵 w.y 为 0");
+    check_near(p.at(3, 2), 0.0, 1e-6, "正交矩阵 w.z 为 0");
+    check_near(p.at(3, 3), 1.0, 1e-6, "正交矩阵 w.w 为 1");
+    const pmx::Vec3 hi = pmx::transform_point(p, {4.0f, 2.0f, -1.0f});
+    check_near(hi.x, 1.0, 1e-5, "正交矩阵右上角 x");
+    check_near(hi.y, 1.0, 1e-5, "正交矩阵右上角 y");
+    check_near(hi.z, -1.0, 1e-5, "正交矩阵近平面 z");
+    const pmx::Vec3 lo = pmx::transform_point(p, {-4.0f, -2.0f, -11.0f});
+    check_near(lo.x, -1.0, 1e-5, "正交矩阵左下角 x");
+    check_near(lo.y, -1.0, 1e-5, "正交矩阵左下角 y");
+    check_near(lo.z, 1.0, 1e-5, "正交矩阵远平面 z");
 }
 
 void test_skinning(const pmx::Model& model) {
@@ -753,6 +772,7 @@ int main(int argc, char** argv) {
         test_pose(model);
         test_bone_morph(out.parent_path());
         test_bone_category();
+        test_orthographic();
         test_skinning(model);
         test_flesh();
         test_physics(model);

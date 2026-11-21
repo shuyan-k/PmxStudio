@@ -369,9 +369,12 @@ inline Mat4 orthographic(float left, float right, float bottom, float top, float
     out.m[0] = 2.0f / (right - left);
     out.m[5] = 2.0f / (top - bottom);
     out.m[10] = -2.0f / (zfar - znear);
-    out.m[12] = -(right + left) / (right - left);
-    out.m[13] = -(top + bottom) / (top - bottom);
-    out.m[14] = -(zfar + znear) / (zfar - znear);
+    // Mat4 是行主序，平移项在最后一列（m[3]/m[7]/m[11]），w 行保持 (0,0,0,1)。
+    // 写成 m[12]/m[13]/m[14] 会把平移放进 w 行，乘积的 w 变成视图 z，
+    // 阴影投影会被错误地做透视除法，斜向光下地面阴影几乎消失。
+    out.m[3] = -(right + left) / (right - left);
+    out.m[7] = -(top + bottom) / (top - bottom);
+    out.m[11] = -(zfar + znear) / (zfar - znear);
     out.m[15] = 1.0f;
     return out;
 }
