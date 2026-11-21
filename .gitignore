@@ -1,5 +1,6 @@
 # 构建产物（CMake / Ninja / VS）
 build/
+build-asan/
 build-headless/
 build-repro/
 out/
