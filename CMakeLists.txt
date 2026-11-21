@@ -65,6 +65,7 @@ set(PMX_CORE_SOURCES
     src/core/utf8_args.cpp
     src/core/name_zh.cpp
     src/core/bone_category.cpp
+    src/core/model_transform.cpp
     src/core/json.cpp
 )
 
@@ -187,7 +188,7 @@ if(PMX_BUILD_TESTS)
     target_link_libraries(pmx_parity_probe PRIVATE pmx_core)
 
     # 2.0 新增的纯核心测试：文件存在才建目标，避免关闭模块时配置失败。
-    foreach(extra anim bake script)
+    foreach(extra anim bake script model_transform)
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_${extra}.cpp")
             add_executable(pmx_tests_${extra} tests/test_${extra}.cpp)
             target_link_libraries(pmx_tests_${extra} PRIVATE pmx_core)

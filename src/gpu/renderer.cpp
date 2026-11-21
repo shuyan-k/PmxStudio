@@ -1090,6 +1090,8 @@ void SceneRenderer::draw_shadow_map(const Model& model, const RenderSettings& se
 }
 
 void SceneRenderer::draw_ground_shadow(const RenderSettings& settings, const Mat4& vp) {
+    // 线框模式下地面接影也必须是实心四边形，否则只会画出两条边框线。
+    glPolygonMode(glc::GL_FRONT_AND_BACK, glc::GL_FILL);
     glEnable(glc::GL_BLEND);
     // 只混合颜色，保持目标 alpha 不变：地面接影是画面效果，不应把导出 PNG
     // 的底色变半透明。
@@ -2068,7 +2070,8 @@ void SceneRenderer::build_instances(const Model& model, Pose& pose, Physics* phy
 
 void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, const Mat4& view,
                            const Mat4& proj, int width, int height,
-                           const RenderSettings& settings, const Selection& selection) {
+                           const RenderSettings& settings, const Selection& selection,
+                           bool clear) {
     if (!ready_ || model_.vao == 0 || width <= 0 || height <= 0) return;
     const Mat4 vp = mul(proj, view);
     // 相机世界位置：view = [R | t]，eye = -R^T t。
@@ -2081,9 +2084,12 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
     glGetIntegerv(glc::GL_DRAW_FRAMEBUFFER_BINDING, &target_fbo);
 
     glViewport(0, 0, width, height);
-    const Vec3 clear_color = effective_background(settings);
-    glClearColor(clear_color.x, clear_color.y, clear_color.z, 1.0f);
-    glClear(glc::GL_COLOR_BUFFER_BIT | glc::GL_DEPTH_BUFFER_BIT | glc::GL_STENCIL_BUFFER_BIT);
+    if (clear) {
+        const Vec3 clear_color = effective_background(settings);
+        glClearColor(clear_color.x, clear_color.y, clear_color.z, 1.0f);
+        glClear(glc::GL_COLOR_BUFFER_BIT | glc::GL_DEPTH_BUFFER_BIT |
+                glc::GL_STENCIL_BUFFER_BIT);
+    }
     glEnable(glc::GL_DEPTH_TEST);
     // 用 LEQUAL 而不是 LESS：PMX 里存在大量完全共面的重复材质（如 袖口/袖口+、
     // 肌2/肌2衣、裙擺/裙擺+），LESS 会让后出现的覆盖层永远过不了深度测试，
@@ -2178,7 +2184,6 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
         glPolygonMode(glc::GL_FRONT_AND_BACK, settings.wireframe ? glc::GL_LINE : glc::GL_FILL);
         glDisable(glc::GL_CULL_FACE);
         glDisable(glc::GL_BLEND);
-        if (settings.shadow_ground) draw_ground_shadow(settings, vp);
     }
 
     // ---- 网格地面
@@ -2190,6 +2195,13 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
         glBindVertexArray(grid_vao_);
         glDrawArrays(glc::GL_LINES, 0, static_cast<GLsizei>(grid_vertex_count_));
         glBindVertexArray(0);
+    }
+
+    // 地面接影画在网格之后：阴影需要同时压暗网格线，否则亮色网格线会把
+    // 投影切成碎片，看起来像“没有地面阴影”。
+    if (shadows_on && settings.shadow_ground) {
+        draw_ground_shadow(settings, vp);
+        glPolygonMode(glc::GL_FRONT_AND_BACK, settings.wireframe ? glc::GL_LINE : glc::GL_FILL);
     }
 
     // ---- 主网格

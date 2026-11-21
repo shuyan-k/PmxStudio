@@ -2,6 +2,7 @@
 #pragma once
 
 #include <array>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <string>
@@ -39,6 +40,25 @@ enum class SelKind { None, Bone, Material, Morph, Rigid, Joint, Soft, Frame, Ver
 struct DocSelection {
     SelKind kind = SelKind::None;
     int index = -1;
+};
+
+// 多模型场景里额外导入的 PMX：各自拥有姿态 / 物理 / 渲染器与摆放，
+// 与主模型的编辑数据完全隔离（不进撤销栈、不参与拾取与保存）。
+struct SceneModel {
+    pmx::Model base;   // 原始坐标；摆放变化时以它为源重建
+    pmx::Model model;  // 已应用摆放的副本
+    std::unique_ptr<pmx::Pose> pose;
+    std::unique_ptr<pmx::SceneRenderer> renderer;
+#ifdef PMX_ENABLE_PHYSICS
+    std::unique_ptr<pmx::Physics> physics;
+#endif
+    std::string path;
+    std::string name;
+    bool visible = true;
+    float pos[3] = {0.0f, 0.0f, 0.0f};
+    float yaw = 0.0f;  // 绕 Y 轴旋转，角度制
+    float scale = 1.0f;
+    bool physics_active = false;  // 物理当前是否为启用状态
 };
 
 struct Viewer {
@@ -99,6 +119,24 @@ struct Viewer {
     // 重建后重新上传，用于加载 / 移除附件、切换锚点骨骼。
     void apply_accessory_structure();
     int default_accessory_bone() const;
+
+    // ---------------------------------------------------------- 多模型场景
+    // 额外导入的 PMX：每个模型有独立的姿态、物理与渲染资源，可分别摆放、
+    // 隐藏、移除；它们只做展示，不参与主模型的编辑、拾取与保存。
+    // 用 deque 保证追加时已有元素的地址稳定（Pose / Physics 持有模型引用）。
+    std::deque<SceneModel> scene_models;
+    // 加载额外 PMX 到场景末尾；失败返回 false 并写入 err。
+    bool add_scene_model(const std::string& path, std::string* err);
+    void remove_scene_model(int index);
+    void clear_scene_models();
+    // 重新应用摆放（缩放 / 绕 Y 轴旋转 / 平移）并重建渲染与物理资源。
+    bool rebuild_scene_model(int index, std::string* err);
+    // 每帧求值：静止姿态 + 物理（跟随全局物理开关与重力参数）。
+    void update_scene_models(float dt);
+    // 在同一目标上追加绘制所有可见的场景模型：不清屏、不画网格与叠加层，
+    // 但保留各自的阴影 pass，让每个模型都投地面阴影。
+    void render_scene_models(const pmx::RenderSettings& base, const pmx::Mat4& view,
+                             const pmx::Mat4& proj, int width, int height);
 
     std::string model_path;
     std::string vpd_path;

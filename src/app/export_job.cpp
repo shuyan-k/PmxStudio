@@ -82,6 +82,8 @@ void export_job_start(Viewer& v) {
         v.motion_playing = playing;
     }
 #endif
+    // 场景模型的物理也回到初始状态，首帧会按当前姿态重新摆好。
+    for (SceneModel& sm : v.scene_models) sm.physics_active = false;
     v.motion_playing = false;
     v.status = "开始导出 " + std::to_string(job.total) + " 帧";
 }
@@ -111,6 +113,8 @@ void export_job_tick(Viewer& v) {
     v.pose->world();
     // 附件自带骨骼/物理：按导出帧间隔推进，保证成片里的挂饰摆动一致。
     v.update_accessory_frame(static_cast<float>(job.settings.step) / 30.0f);
+    // 多模型场景：额外模型按同样的帧间隔推进物理。
+    v.update_scene_models(static_cast<float>(job.settings.step) / 30.0f);
 
     // 场景相机：有相机动作就按相机轨渲染（与视口是否处于相机视角无关）。
     pmx::OrbitCamera camera = v.camera;
@@ -129,9 +133,12 @@ void export_job_tick(Viewer& v) {
     settings.rim = 0.0f;
 
     const float aspect = static_cast<float>(w) / static_cast<float>(std::max(1, h));
+    const pmx::Mat4 view = camera.view();
+    const pmx::Mat4 proj = camera.projection(aspect);
     job.target->bind();
-    v.renderer.render(v.active_model(), *v.pose, nullptr, camera.view(), camera.projection(aspect),
-                      w, h, settings, pmx::Selection{});
+    v.renderer.render(v.active_model(), *v.pose, nullptr, view, proj, w, h, settings,
+                      pmx::Selection{});
+    v.render_scene_models(settings, view, proj, w, h);
     const bool read_ok = job.target->read_rgba(w, h, job.rgba, &job.error);
     job.target->unbind();
 
