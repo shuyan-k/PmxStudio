@@ -491,7 +491,7 @@ void Viewer::handle_shortcuts() {
     // 退出确认框是模态的：弹窗期间不响应其它快捷键（Esc 由弹窗自己处理）。
     if (close_requested) return;
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_M, false)) set_preview_mode(!preview_mode);
-    // Ctrl+, 打开设置窗口（与「编辑 → 设置…」一致）。
+    // Ctrl+, 打开设置窗口（与「帮助 → 设置与快捷键…」一致）。
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Comma, false)) show_settings_window = true;
     // Ctrl+F：预览模式打开「检索」工具窗口，方便快速定位骨骼。
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
@@ -865,6 +865,15 @@ void Viewer::draw_ui() {
             if (mode_button("预览", preview_mode)) set_preview_mode(true);
         }
         if (ImGui::BeginMenu("文件")) {
+            // 菜单栏不再单列「编辑」，避免与顶部「编辑 / 预览」模式按钮重名歧义；
+            // 撤销 / 重做并入「文件」，检索归入「视图」，设置归入「帮助」。
+            ImGui::BeginDisabled(!can_undo());
+            if (ImGui::MenuItem("撤销", "Ctrl+Z")) undo();
+            ImGui::EndDisabled();
+            ImGui::BeginDisabled(!can_redo());
+            if (ImGui::MenuItem("重做", "Ctrl+Y")) redo();
+            ImGui::EndDisabled();
+            ImGui::Separator();
             if (ImGui::MenuItem("打开 PMX…", "Ctrl+O")) open_pmx();
             const bool has_model = pose != nullptr;
             if (ImGui::MenuItem("场景模型…", nullptr, show_scene_window, has_model))
@@ -911,26 +920,6 @@ void Viewer::draw_ui() {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("编辑##edit_menu")) {
-            ImGui::BeginDisabled(!can_undo());
-            if (ImGui::MenuItem("撤销", "Ctrl+Z")) undo();
-            ImGui::EndDisabled();
-            ImGui::BeginDisabled(!can_redo());
-            if (ImGui::MenuItem("重做", "Ctrl+Y")) redo();
-            ImGui::EndDisabled();
-            ImGui::Separator();
-            if (ImGui::MenuItem("检索…", "Ctrl+F", show_search_window,
-                                preview_mode && pose != nullptr)) {
-                show_search_window = !show_search_window;
-                if (show_search_window) {
-                    focus_preview_search = true;
-                    reveal_selection = false;
-                }
-            }
-            if (ImGui::MenuItem("设置…", nullptr, show_settings_window))
-                show_settings_window = !show_settings_window;
-            ImGui::EndMenu();
-        }
         if (ImGui::BeginMenu("视图")) {
             if (ImGui::MenuItem("预览模式", "Ctrl+M", preview_mode))
                 set_preview_mode(!preview_mode);
@@ -962,6 +951,14 @@ void Viewer::draw_ui() {
             if (ImGui::MenuItem("卡通光照", nullptr, &flat_toon))
                 toon = flat_toon ? 1.0f : 0.0f;
             ImGui::Separator();
+            if (ImGui::MenuItem("检索…", "Ctrl+F", show_search_window,
+                                preview_mode && pose != nullptr)) {
+                show_search_window = !show_search_window;
+                if (show_search_window) {
+                    focus_preview_search = true;
+                    reveal_selection = false;
+                }
+            }
             if (ImGui::MenuItem("相机…", nullptr, show_camera_window, pose != nullptr))
                 show_camera_window = !show_camera_window;
             if (ImGui::MenuItem("灯光…", nullptr, show_light_window))
