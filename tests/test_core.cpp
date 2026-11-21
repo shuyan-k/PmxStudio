@@ -11,6 +11,7 @@
 #include "core/flesh.hpp"
 #include "core/fs.hpp"
 #include "core/math.hpp"
+#include "core/material_ext.hpp"
 #include "core/morph.hpp"
 #include "core/pmx.hpp"
 #include "core/pose.hpp"
@@ -276,6 +277,30 @@ void test_orthographic() {
     check_near(lo.x, -1.0, 1e-5, "正交矩阵左下角 x");
     check_near(lo.y, -1.0, 1e-5, "正交矩阵左下角 y");
     check_near(lo.z, 1.0, 1e-5, "正交矩阵远平面 z");
+}
+
+void test_material_ext_candidates() {
+    std::printf("[材质扩展] 贴图配对约定\n");
+    const pmx::MaterialExtCandidates c = pmx::material_ext_candidates("/model/tex/body.PNG");
+    check(!c.normal.empty() && !c.orm.empty() && !c.metallic.empty(), "材质扩展候选非空");
+    const std::string dir = pmx::utf8_string(pmx::utf8_path("/model/tex"));
+    check(c.normal.front() == pmx::utf8_string(pmx::utf8_path(dir) / "body_normal.png"),
+          "法线贴图按贴图名派生");
+    check(c.orm.front() == pmx::utf8_string(pmx::utf8_path(dir) / "body_orm.png"),
+          "ORM 贴图按贴图名派生");
+    check(c.metallic.front() == pmx::utf8_string(pmx::utf8_path(dir) / "body_metallic.png"),
+          "金属度贴图按贴图名派生");
+    const auto has = [](const std::vector<std::string>& list, const std::string& name) {
+        return std::find(list.begin(), list.end(), name) != list.end();
+    };
+    check(has(c.normal, pmx::utf8_string(pmx::utf8_path(dir) / "body_n.png")),
+          "支持 _n 法线后缀");
+    check(has(c.orm, pmx::utf8_string(pmx::utf8_path(dir) / "body_orm.jpg")),
+          "候选包含其他图片格式");
+    check(pmx::material_ext_candidates("").normal.empty(), "空路径没有候选");
+    check(pmx::material_ext_candidates("/m/tex/body").normal.front() ==
+              pmx::utf8_string(pmx::utf8_path("/m/tex") / "body_normal.png"),
+          "无扩展名的漫反射贴图也能派生");
 }
 
 void test_skinning(const pmx::Model& model) {
@@ -773,6 +798,7 @@ int main(int argc, char** argv) {
         test_bone_morph(out.parent_path());
         test_bone_category();
         test_orthographic();
+        test_material_ext_candidates();
         test_skinning(model);
         test_flesh();
         test_physics(model);

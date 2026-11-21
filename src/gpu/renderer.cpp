@@ -10,6 +10,7 @@
 #include <unordered_set>
 
 #include "core/fs.hpp"
+#include "core/material_ext.hpp"
 #include "core/skinning.hpp"
 #include "physics/physics.hpp"
 
@@ -1726,23 +1727,11 @@ void SceneRenderer::upload_skinned(const std::vector<Vec3>& pos, const std::vect
     glBindBufferBase(glc::GL_SHADER_STORAGE_BUFFER, kBindingNrm, model_.out_nrm_ssbo);
 }
 
-SceneRenderer::Texture& SceneRenderer::texture_for(const Model& model, int index) {
+SceneRenderer::Texture& SceneRenderer::texture_from_path(const std::string& path) {
     static Texture missing;
-    if (index < 0 || index >= static_cast<int>(model.textures.size())) return missing;
-    if (static_cast<std::size_t>(index) < texture_index_ready_.size() &&
-        texture_index_ready_[static_cast<std::size_t>(index)])
-        return texture_by_index_[static_cast<std::size_t>(index)];
-    const std::string path = model.resolve_texture(index);
+    if (path.empty()) return missing;
     auto it = textures_.find(path);
-    if (it != textures_.end()) {
-        // 同一个文件被多个材质引用：复用已加载的纹理，只补一次索引缓存。
-        if (static_cast<std::size_t>(index) < texture_by_index_.size()) {
-            texture_by_index_[static_cast<std::size_t>(index)] = it->second;
-            texture_index_ready_[static_cast<std::size_t>(index)] = 1;
-            return texture_by_index_[static_cast<std::size_t>(index)];
-        }
-        return it->second;
-    }
+    if (it != textures_.end()) return it->second;
     Texture tex;
     int w = 0, h = 0, comp = 0;
     // PMX 的 UV 原点在左上角（DirectX 约定），stb 默认把首行作为纹理第 0 行，
@@ -1793,13 +1782,39 @@ SceneRenderer::Texture& SceneRenderer::texture_for(const Model& model, int index
         stbi_image_free(pixels);
         tex.valid = true;
     }
-    auto res = textures_.emplace(path, tex);
+    return textures_.emplace(path, tex).first->second;
+}
+
+SceneRenderer::Texture& SceneRenderer::texture_for(const Model& model, int index) {
+    static Texture missing;
+    if (index < 0 || index >= static_cast<int>(model.textures.size())) return missing;
+    if (static_cast<std::size_t>(index) < texture_index_ready_.size() &&
+        texture_index_ready_[static_cast<std::size_t>(index)])
+        return texture_by_index_[static_cast<std::size_t>(index)];
+    Texture& tex = texture_from_path(model.resolve_texture(index));
+    // 同一个文件被多个材质引用：纹理已由 textures_ 复用，这里只补索引缓存。
     if (static_cast<std::size_t>(index) < texture_by_index_.size()) {
-        texture_by_index_[static_cast<std::size_t>(index)] = res.first->second;
+        texture_by_index_[static_cast<std::size_t>(index)] = tex;
         texture_index_ready_[static_cast<std::size_t>(index)] = 1;
         return texture_by_index_[static_cast<std::size_t>(index)];
     }
-    return res.first->second;
+    return tex;
+}
+
+SceneRenderer::MaterialExtTexture& SceneRenderer::material_ext_for(const Model& model,
+                                                                  const Material& mt) {
+    static MaterialExtTexture missing;
+    if (mt.texture < 0) return missing;
+    const std::string diffuse = model.resolve_texture(mt.texture);
+    if (diffuse.empty()) return missing;
+    auto it = material_ext_.find(diffuse);
+    if (it != material_ext_.end()) return it->second;
+    const MaterialExtFiles files = find_material_ext(diffuse);
+    MaterialExtTexture ext;
+    ext.normal = texture_from_path(files.normal);
+    ext.orm = texture_from_path(files.orm);
+    ext.metallic = texture_from_path(files.metallic);
+    return material_ext_.emplace(diffuse, ext).first->second;
 }
 
 SceneRenderer::Texture SceneRenderer::toon_for(const Model& model, const Material& mt) {
@@ -1841,6 +1856,20 @@ void SceneRenderer::bind_material(const Model& model, const Material& mt,
     glBindTexture(glc::GL_TEXTURE_2D, toon.valid ? toon.id : 0);
     mesh_program_.set1i("uToonTex", 2);
     mesh_program_.set1i("uUseToonTex", toon.valid ? 1 : 0);
+
+    // ---- 内置插件「材质扩展」：法线 / 金属度贴图。关闭时完全不解析、不采样，
+    // 渲染结果与没有该插件时逐像素一致。
+    MaterialExtTexture* ext = settings.material_ext ? &material_ext_for(model, mt) : nullptr;
+    auto bind_ext = [&](int unit, const Texture* tex, const char* sampler, const char* use) {
+        glActiveTexture(glc::GL_TEXTURE0 + unit);
+        glBindTexture(glc::GL_TEXTURE_2D, tex && tex->valid ? tex->id : 0);
+        mesh_program_.set1i(sampler, unit);
+        mesh_program_.set1i(use, tex && tex->valid ? 1 : 0);
+    };
+    bind_ext(3, ext ? &ext->normal : nullptr, "uNormalTex", "uUseNormalMap");
+    bind_ext(4, ext ? &ext->orm : nullptr, "uOrmTex", "uUseOrm");
+    bind_ext(5, ext ? &ext->metallic : nullptr, "uMetallicTex", "uUseMetallic");
+    mesh_program_.set1f("uNormalStrength", std::clamp(settings.normal_strength, 0.0f, 2.0f));
     glActiveTexture(glc::GL_TEXTURE0);
 }
 

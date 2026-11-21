@@ -439,6 +439,8 @@ JsonValue settings_json(const Viewer& viewer) {
     pmx::json_set(out, "shadow_strength", pmx::json_number(viewer.shadow_strength));
     pmx::json_set(out, "shadow_softness", pmx::json_number(viewer.shadow_softness));
     pmx::json_set(out, "shadow_ground", pmx::json_bool(viewer.shadow_ground));
+    pmx::json_set(out, "material_ext", pmx::json_bool(viewer.material_ext));
+    pmx::json_set(out, "normal_strength", pmx::json_number(viewer.normal_strength));
     // 肉体求解暂时停用：对外始终报告关闭，避免脚本误以为已生效。
     pmx::json_set(out, "flesh", pmx::json_bool(Viewer::kFleshEnabled && viewer.flesh));
     pmx::json_set(out, "flesh_gpu", pmx::json_bool(viewer.flesh_gpu));
@@ -500,6 +502,7 @@ void apply_settings(Viewer& viewer, const JsonValue& params) {
     set_bool("preview_alpha", viewer.preview_alpha);
     set_bool("show_light", viewer.show_light);
     set_bool("camera_gizmo", viewer.camera_gizmo);
+    set_bool("material_ext", viewer.material_ext);
 
     if (has(params, "bone_alpha")) viewer.bone_alpha = optional_float(params, "bone_alpha", viewer.bone_alpha);
     if (has(params, "rigid_alpha")) viewer.rigid_alpha = optional_float(params, "rigid_alpha", viewer.rigid_alpha);
@@ -573,6 +576,10 @@ void apply_settings(Viewer& viewer, const JsonValue& params) {
                        3.0f);
     if (has(params, "shadow_ground"))
         viewer.shadow_ground = optional_bool(params, "shadow_ground", viewer.shadow_ground);
+    if (has(params, "normal_strength"))
+        viewer.normal_strength =
+            std::clamp(optional_float(params, "normal_strength", viewer.normal_strength), 0.0f,
+                       2.0f);
     set_bool("flesh", viewer.flesh);
     set_bool("flesh_gpu", viewer.flesh_gpu);
     if (has(params, "flesh_range"))
@@ -708,6 +715,8 @@ pmx::RenderSettings render_settings(const Viewer& viewer, bool overlays) {
     settings.shadow_strength = viewer.shadow_strength;
     settings.shadow_softness = viewer.shadow_softness;
     settings.shadow_ground = viewer.shadow_ground;
+    settings.material_ext = viewer.material_ext;
+    settings.normal_strength = viewer.normal_strength;
     {
         const pmx::RenderSettings flesh = viewer.flesh_render_settings();
         settings.flesh = flesh.flesh;

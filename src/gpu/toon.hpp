@@ -62,6 +62,14 @@ uniform float uShadowStrength;
 uniform float uShadowSoftness;
 uniform float uShadowTexel;
 uniform float uShadowBias;
+// 内置材质扩展插件：法线 / 金属度-粗糙度。uUse* 全为 0 时与未启用插件一致。
+uniform sampler2D uNormalTex;
+uniform sampler2D uOrmTex;
+uniform sampler2D uMetallicTex;
+uniform int uUseNormalMap;
+uniform int uUseOrm;
+uniform int uUseMetallic;
+uniform float uNormalStrength;
 float shadow_visibility(vec3 world, vec3 n, float ndl) {
     if (uShadows == 0) return 1.0;
     // 法线偏移：沿法线离开表面一小段，抵消深度贴图的采样误差，避免自阴影条纹。
@@ -81,12 +89,49 @@ float shadow_visibility(vec3 world, vec3 n, float ndl) {
         }
     return sum / 25.0;
 }
+// 无预计算切线的 TBN（屏幕空间导数）：PMX 不带切线也能用法线贴图。
+vec3 material_ext_normal(vec3 n) {
+    if (uUseNormalMap == 0) return n;
+    vec3 dp1 = dFdx(vWorld);
+    vec3 dp2 = dFdy(vWorld);
+    vec2 duv1 = dFdx(vUV);
+    vec2 duv2 = dFdy(vUV);
+    vec3 dp2perp = cross(dp2, n);
+    vec3 dp1perp = cross(n, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+    float tl = length(T);
+    float bl = length(B);
+    if (tl < 1e-8 || bl < 1e-8) return n;
+    T /= tl;
+    B /= bl;
+    // 贴图按左上角为原点加载（PMX / DirectX 约定），绿色通道对应 +v。
+    vec3 nt = texture(uNormalTex, vUV).xyz * 2.0 - 1.0;
+    nt.xy *= uNormalStrength;
+    vec3 mapped = normalize(T * nt.x + B * nt.y + n * max(nt.z, 0.05));
+    return dot(mapped, n) > 0.0 ? mapped : n;
+}
 void main() {
     vec4 tex = uUseTex == 1 ? texture(uTex, vUV) : vec4(1.0);
     if (tex.a < 0.02) discard;
     vec4 base = vec4(tex.rgb * uDiffuse.rgb * uModelBrightness, tex.a * uDiffuse.a);
     vec3 n = normalize(vN);
     if (!gl_FrontFacing) n = -n;
+    n = material_ext_normal(n);
+    // 金属度 / 粗糙度：仅在 ORM 或金属度贴图存在时改变着色。
+    bool use_pbr = uUseOrm == 1 || uUseMetallic == 1;
+    float metallic = 0.0;
+    float roughness = 0.5;
+    if (uUseOrm == 1) {
+        vec4 mr = texture(uOrmTex, vUV);
+        roughness = clamp(mr.g, 0.0, 1.0);
+        metallic = clamp(mr.b, 0.0, 1.0);
+    } else if (uUseMetallic == 1) {
+        metallic = clamp(texture(uMetallicTex, vUV).r, 0.0, 1.0);
+        roughness = 0.45;
+    }
+    // 金属没有漫反射：按金属度压暗本体色，高光改用本体色着色。
+    vec3 surface = base.rgb * (1.0 - 0.9 * metallic);
     vec3 light = normalize(uLightDir);
     float ndl = dot(n, light);
     float ndl_c = max(ndl, 0.0);
@@ -119,10 +164,27 @@ void main() {
     // 只有骨骼叠加层（另一套 solid 着色器）在变——看起来像灯光绑定到了骨骼上。
     const float kAmbientStrength = 0.32;
     vec3 light_rgb = uLightColor * uLightIntensity;
-    vec3 col = base.rgb * mix(uSceneAmbient * kAmbientStrength, vec3(1.0), shade) * light_rgb;
-    col += uAmbient * base.rgb * uSceneAmbient * 0.06;
-    float spec = pow(max(ndl, 0.0), 14.0) * uSpecCoef * shadow;
-    col += uSpecular * spec * light_rgb;
+    vec3 col = surface * mix(uSceneAmbient * kAmbientStrength, vec3(1.0), shade) * light_rgb;
+    col += uAmbient * surface * uSceneAmbient * 0.06;
+    vec3 view_dir = normalize(uEye - vWorld);
+    float spec_power = 14.0;
+    float spec_strength = uSpecCoef;
+    vec3 spec_color = uSpecular;
+    if (use_pbr) {
+        // 粗糙度控制高光宽度（近似 Blinn-Phong 指数），金属度把高光染成本体色。
+        spec_power = mix(140.0, 6.0, roughness * roughness);
+        spec_strength = mix(uSpecCoef, 1.1, metallic);
+        spec_color = mix(uSpecular, base.rgb, metallic);
+    }
+    float spec = pow(max(ndl, 0.0), spec_power) * spec_strength * shadow;
+    col += spec_color * spec * light_rgb;
+    // 没有环境贴图时给金属一个天空/地面渐变的廉价反射，避免金属区域变纯黑。
+    if (use_pbr && metallic > 0.001) {
+        vec3 R = reflect(-view_dir, n);
+        vec3 env = mix(vec3(0.08, 0.09, 0.11), light_rgb, clamp(R.y * 0.5 + 0.5, 0.0, 1.0));
+        float fres = pow(1.0 - max(dot(n, view_dir), 0.0), 3.0);
+        col += env * metallic * (1.0 - roughness * 0.75) * (0.35 + 0.65 * fres);
+    }
     // 球面贴图按相机空间法线的 XY 采样（MMD 约定），转动视角时高光会滑动。
     if (uUseSphere == 1) {
         vec3 nv = normalize(mat3(uView) * n);
@@ -133,7 +195,6 @@ void main() {
         else if (uSphereMode == 3) col = mix(col, sp.rgb, sp.a);
     }
     // 边缘光：贴着轮廓的位置补一点本体色，增强立体感又不破坏卡通分层。
-    vec3 view_dir = normalize(uEye - vWorld);
     float rim = smoothstep(0.6, 1.0, 1.0 - max(dot(n, view_dir), 0.0));
     col += base.rgb * (uRim * rim);
     fragColor = vec4(clamp(col, 0.0, 1.0), base.a);

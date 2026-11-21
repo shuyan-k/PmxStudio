@@ -66,6 +66,7 @@ set(PMX_CORE_SOURCES
     src/core/name_zh.cpp
     src/core/bone_category.cpp
     src/core/model_transform.cpp
+    src/core/material_ext.cpp
     src/core/json.cpp
 )
 

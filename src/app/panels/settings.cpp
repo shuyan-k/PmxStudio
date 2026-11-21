@@ -67,6 +67,22 @@ void panel_settings(Viewer& v) {
     ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
     ImGui::SliderFloat("关节##joint_alpha", &v.joint_alpha, 0.0f, 1.0f, "%.2f");
 
+    // ------------------------------------------------------------ 插件
+    ImGui::SeparatorText("插件");
+    ImGui::Checkbox("材质扩展：法线 / 金属度贴图##material_ext", &v.material_ext);
+    ImGui::SetItemTooltip(
+        "内置插件，默认关闭；关闭时渲染与原版完全一致。\n"
+        "开启后按漫反射贴图名自动配对：\n"
+        "  <贴图名>_normal.png   法线贴图\n"
+        "  <贴图名>_orm.png      G=粗糙度，B=金属度\n"
+        "  <贴图名>_metallic.png 灰度金属度\n"
+        "PMX 本身没有这些通道，找不到对应文件时保持原样。");
+    if (v.material_ext) {
+        ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
+        ImGui::SliderFloat("法线强度##normal_strength", &v.normal_strength, 0.0f, 2.0f, "%.2f");
+        ImGui::SetItemTooltip("缩放法线贴图的 XY 分量；0 等同于关闭法线贴图");
+    }
+
     // ------------------------------------------------------------ 卡通着色
     ImGui::SeparatorText("卡通着色");
     ImGui::SetNextItemWidth(pmxui::scale(-90.0f));

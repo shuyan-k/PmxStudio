@@ -81,6 +81,11 @@ struct RenderSettings {
     float shadow_softness = 1.0f;
     bool shadow_ground = true;
 
+    // 内置插件「材质扩展」：法线 / 金属度-粗糙度贴图，默认关闭。
+    // PMX 没有这些通道，按漫反射贴图名的 _normal / _orm / _metallic 约定配对。
+    bool material_ext = false;
+    float normal_strength = 1.0f;
+
     // 接触式肉体变形（第一阶段）：自接触凹陷 + 周边隆起。
     // 启用后蒙皮走 CPU 路径（需要在求解器里访问顶点位置），区域硬度按骨骼权重生效。
     bool flesh = false;
@@ -215,6 +220,13 @@ private:
         bool has_alpha = false;
     };
 
+    // 材质扩展插件的每材质贴图（按漫反射贴图路径缓存）。
+    struct MaterialExtTexture {
+        Texture normal;
+        Texture orm;
+        Texture metallic;
+    };
+
     struct OverlayMesh {
         GLuint vao = 0;
         GLuint vbo = 0;
@@ -227,6 +239,8 @@ private:
     // 按贴图索引缓存：解析路径 / 查表只在首次使用时做，绘制时 O(1) 取纹理。
     std::vector<Texture> texture_by_index_;
     std::vector<std::uint8_t> texture_index_ready_;
+    // 材质扩展插件：漫反射贴图路径 -> 配对到的法线 / ORM / 金属度贴图。
+    std::unordered_map<std::string, MaterialExtTexture> material_ext_;
 
     OverlayMesh bone_mesh_;       // 每帧重建：八面体（顶点色）
     OverlayMesh camera_mesh_;     // 每帧重建：场景相机线框（pos3 + color4）
@@ -361,6 +375,10 @@ private:
     void build_instances(const Model& model, Pose& pose, Physics* physics,
                          const RenderSettings& settings, const Selection& selection);
     Texture& texture_for(const Model& model, int index);
+    // 按绝对路径加载并缓存贴图（材质扩展插件用，不经过 PMX 贴图索引）。
+    Texture& texture_from_path(const std::string& path);
+    // 材质扩展插件：按漫反射贴图名配对 _normal / _orm / _metallic。
+    MaterialExtTexture& material_ext_for(const Model& model, const Material& mt);
     // 材质卡通光照用的 toon 贴图：材质自带贴图或内置 toon01..10。
     Texture toon_for(const Model& model, const Material& mt);
     void bind_material(const Model& model, const Material& mt, const RenderSettings& settings);
