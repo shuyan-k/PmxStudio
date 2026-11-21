@@ -78,6 +78,11 @@ void panel_settings(Viewer& v) {
         "  <贴图名>_metallic.png 灰度金属度\n"
         "PMX 本身没有这些通道，找不到对应文件时保持原样。");
     if (v.material_ext) {
+        ImGui::Checkbox("缺少法线贴图时自动生成##normal_auto", &v.normal_auto);
+        ImGui::SetItemTooltip(
+            "从漫反射贴图亮度推导凹凸，不读取额外文件；\n"
+            "适合布料、皮革等有明暗细节的纹理。\n"
+            "脸部/表情等画好的明暗可能产生不自然的凹凸，可关闭。");
         ImGui::SetNextItemWidth(pmxui::scale(-90.0f));
         ImGui::SliderFloat("法线强度##normal_strength", &v.normal_strength, 0.0f, 2.0f, "%.2f");
         ImGui::SetItemTooltip("缩放法线贴图的 XY 分量；0 等同于关闭法线贴图");

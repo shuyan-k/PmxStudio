@@ -441,6 +441,7 @@ JsonValue settings_json(const Viewer& viewer) {
     pmx::json_set(out, "shadow_ground", pmx::json_bool(viewer.shadow_ground));
     pmx::json_set(out, "material_ext", pmx::json_bool(viewer.material_ext));
     pmx::json_set(out, "normal_strength", pmx::json_number(viewer.normal_strength));
+    pmx::json_set(out, "normal_auto", pmx::json_bool(viewer.normal_auto));
     // 肉体求解暂时停用：对外始终报告关闭，避免脚本误以为已生效。
     pmx::json_set(out, "flesh", pmx::json_bool(Viewer::kFleshEnabled && viewer.flesh));
     pmx::json_set(out, "flesh_gpu", pmx::json_bool(viewer.flesh_gpu));
@@ -503,6 +504,7 @@ void apply_settings(Viewer& viewer, const JsonValue& params) {
     set_bool("show_light", viewer.show_light);
     set_bool("camera_gizmo", viewer.camera_gizmo);
     set_bool("material_ext", viewer.material_ext);
+    set_bool("normal_auto", viewer.normal_auto);
 
     if (has(params, "bone_alpha")) viewer.bone_alpha = optional_float(params, "bone_alpha", viewer.bone_alpha);
     if (has(params, "rigid_alpha")) viewer.rigid_alpha = optional_float(params, "rigid_alpha", viewer.rigid_alpha);
@@ -717,6 +719,7 @@ pmx::RenderSettings render_settings(const Viewer& viewer, bool overlays) {
     settings.shadow_ground = viewer.shadow_ground;
     settings.material_ext = viewer.material_ext;
     settings.normal_strength = viewer.normal_strength;
+    settings.normal_auto = viewer.normal_auto;
     {
         const pmx::RenderSettings flesh = viewer.flesh_render_settings();
         settings.flesh = flesh.flesh;

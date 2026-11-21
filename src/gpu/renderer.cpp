@@ -1727,12 +1727,55 @@ void SceneRenderer::upload_skinned(const std::vector<Vec3>& pos, const std::vect
     glBindBufferBase(glc::GL_SHADER_STORAGE_BUFFER, kBindingNrm, model_.out_nrm_ssbo);
 }
 
+SceneRenderer::Texture SceneRenderer::make_texture(const unsigned char* pixels, int w, int h,
+                                                   bool scan_alpha) {
+    Texture tex;
+    if (!pixels || w <= 0 || h <= 0) return tex;
+    if (scan_alpha) {
+        // 统计贴图透明覆盖：丝袜、蕾丝、发丝高光这类材质靠贴图 alpha 表现
+        // 半透明，但 PMX 里 diffuse alpha 仍是 1。超过 1% 的像素带透明就
+        // 认为需要走透明 pass，避免低 alpha 像素的黑色 RGB 被不透明画出。
+        std::size_t transparent = 0;
+        const std::size_t pixel_count =
+            static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+        for (std::size_t i = 0; i < pixel_count; ++i) {
+            if (pixels[i * 4 + 3] < 250) ++transparent;
+        }
+        tex.has_alpha = transparent * 100 > pixel_count;
+    }
+    tex.width = w;
+    tex.height = h;
+    glGenTextures(1, &tex.id);
+    glBindTexture(glc::GL_TEXTURE_2D, tex.id);
+    glPixelStorei(glc::GL_UNPACK_ALIGNMENT, 4);
+    glTexImage2D(glc::GL_TEXTURE_2D, 0, glc::GL_RGBA8, w, h, 0, glc::GL_RGBA,
+                 glc::GL_UNSIGNED_BYTE, pixels);
+    glGenerateMipmap(glc::GL_TEXTURE_2D);
+    glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_MIN_FILTER,
+                    static_cast<GLint>(glc::GL_LINEAR_MIPMAP_LINEAR));
+    glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_MAG_FILTER,
+                    static_cast<GLint>(glc::GL_LINEAR));
+    glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_WRAP_S,
+                    static_cast<GLint>(glc::GL_REPEAT));
+    glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_WRAP_T,
+                    static_cast<GLint>(glc::GL_REPEAT));
+    // 各向异性过滤：发丝/裙摆这类斜视表面只用 trilinear 会被拉到偏低的
+    // mip 层级，细节被平均成一片。按驱动上限取 16×，不支持时该调用无效。
+    GLfloat max_aniso = 1.0f;
+    glGetFloatv(glc::GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &max_aniso);
+    if (max_aniso > 1.0f) {
+        glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_MAX_ANISOTROPY_EXT,
+                        static_cast<GLint>(std::min(max_aniso, 16.0f)));
+    }
+    tex.valid = true;
+    return tex;
+}
+
 SceneRenderer::Texture& SceneRenderer::texture_from_path(const std::string& path) {
     static Texture missing;
     if (path.empty()) return missing;
     auto it = textures_.find(path);
     if (it != textures_.end()) return it->second;
-    Texture tex;
     int w = 0, h = 0, comp = 0;
     // PMX 的 UV 原点在左上角（DirectX 约定），stb 默认把首行作为纹理第 0 行，
     // 正好对应 v=0，因此这里不能再做垂直翻转；翻转会让脸部/表情 UV 落到图集
@@ -1746,42 +1789,8 @@ SceneRenderer::Texture& SceneRenderer::texture_from_path(const std::string& path
         bytes.empty() ? nullptr
                       : stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(bytes.data()),
                                               static_cast<int>(bytes.size()), &w, &h, &comp, 4);
-    if (pixels) {
-        // 统计贴图透明覆盖：丝袜、蕾丝、发丝高光这类材质靠贴图 alpha 表现
-        // 半透明，但 PMX 里 diffuse alpha 仍是 1。超过 1% 的像素带透明就
-        // 认为需要走透明 pass，避免低 alpha 像素的黑色 RGB 被不透明画出。
-        std::size_t transparent = 0;
-        const std::size_t pixel_count =
-            static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
-        for (std::size_t i = 0; i < pixel_count; ++i) {
-            if (pixels[i * 4 + 3] < 250) ++transparent;
-        }
-        tex.has_alpha = transparent * 100 > pixel_count;
-        glGenTextures(1, &tex.id);
-        glBindTexture(glc::GL_TEXTURE_2D, tex.id);
-        glPixelStorei(glc::GL_UNPACK_ALIGNMENT, 4);
-        glTexImage2D(glc::GL_TEXTURE_2D, 0, glc::GL_RGBA8, w, h, 0, glc::GL_RGBA,
-                     glc::GL_UNSIGNED_BYTE, pixels);
-        glGenerateMipmap(glc::GL_TEXTURE_2D);
-        glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_MIN_FILTER,
-                        static_cast<GLint>(glc::GL_LINEAR_MIPMAP_LINEAR));
-        glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_MAG_FILTER,
-                        static_cast<GLint>(glc::GL_LINEAR));
-        glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_WRAP_S,
-                        static_cast<GLint>(glc::GL_REPEAT));
-        glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_WRAP_T,
-                        static_cast<GLint>(glc::GL_REPEAT));
-        // 各向异性过滤：发丝/裙摆这类斜视表面只用 trilinear 会被拉到偏低的
-        // mip 层级，细节被平均成一片。按驱动上限取 16×，不支持时该调用无效。
-        GLfloat max_aniso = 1.0f;
-        glGetFloatv(glc::GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &max_aniso);
-        if (max_aniso > 1.0f) {
-            glTexParameteri(glc::GL_TEXTURE_2D, glc::GL_TEXTURE_MAX_ANISOTROPY_EXT,
-                            static_cast<GLint>(std::min(max_aniso, 16.0f)));
-        }
-        stbi_image_free(pixels);
-        tex.valid = true;
-    }
+    Texture tex = make_texture(pixels, w, h, true);
+    if (pixels) stbi_image_free(pixels);
     return textures_.emplace(path, tex).first->second;
 }
 
@@ -1815,6 +1824,28 @@ SceneRenderer::MaterialExtTexture& SceneRenderer::material_ext_for(const Model& 
     ext.orm = texture_from_path(files.orm);
     ext.metallic = texture_from_path(files.metallic);
     return material_ext_.emplace(diffuse, ext).first->second;
+}
+
+const SceneRenderer::Texture* SceneRenderer::auto_normal_for(const std::string& diffuse,
+                                                             MaterialExtTexture& ext) {
+    if (ext.auto_tried) return ext.auto_normal.valid ? &ext.auto_normal : nullptr;
+    ext.auto_tried = true;
+    Texture& src = texture_from_path(diffuse);
+    if (!src.valid || src.width < 3 || src.height < 3) return nullptr;
+    std::vector<unsigned char> pixels(
+        static_cast<std::size_t>(src.width) * static_cast<std::size_t>(src.height) * 4);
+    // 从已上传的漫反射贴图读回像素：朝向与 UV 完全一致，也省去再次解码文件。
+    glActiveTexture(glc::GL_TEXTURE0);
+    glBindTexture(glc::GL_TEXTURE_2D, src.id);
+    glPixelStorei(glc::GL_PACK_ALIGNMENT, 4);
+    glGetTexImage(glc::GL_TEXTURE_2D, 0, glc::GL_RGBA, glc::GL_UNSIGNED_BYTE, pixels.data());
+    const std::vector<unsigned char> normal =
+        generate_normal_map(pixels.data(), src.width, src.height);
+    ext.auto_normal = make_texture(normal.data(), src.width, src.height, false);
+    // make_texture 会绑定新纹理，恢复漫反射，避免破坏 unit 0 上的 uTex。
+    glActiveTexture(glc::GL_TEXTURE0);
+    glBindTexture(glc::GL_TEXTURE_2D, src.id);
+    return ext.auto_normal.valid ? &ext.auto_normal : nullptr;
 }
 
 SceneRenderer::Texture SceneRenderer::toon_for(const Model& model, const Material& mt) {
@@ -1860,13 +1891,21 @@ void SceneRenderer::bind_material(const Model& model, const Material& mt,
     // ---- 内置插件「材质扩展」：法线 / 金属度贴图。关闭时完全不解析、不采样，
     // 渲染结果与没有该插件时逐像素一致。
     MaterialExtTexture* ext = settings.material_ext ? &material_ext_for(model, mt) : nullptr;
+    const Texture* normal_tex = nullptr;
+    if (ext) {
+        if (ext->normal.valid) {
+            normal_tex = &ext->normal;
+        } else if (settings.normal_auto && mt.texture >= 0) {
+            normal_tex = auto_normal_for(model.resolve_texture(mt.texture), *ext);
+        }
+    }
     auto bind_ext = [&](int unit, const Texture* tex, const char* sampler, const char* use) {
         glActiveTexture(glc::GL_TEXTURE0 + unit);
         glBindTexture(glc::GL_TEXTURE_2D, tex && tex->valid ? tex->id : 0);
         mesh_program_.set1i(sampler, unit);
         mesh_program_.set1i(use, tex && tex->valid ? 1 : 0);
     };
-    bind_ext(3, ext ? &ext->normal : nullptr, "uNormalTex", "uUseNormalMap");
+    bind_ext(3, normal_tex, "uNormalTex", "uUseNormalMap");
     bind_ext(4, ext ? &ext->orm : nullptr, "uOrmTex", "uUseOrm");
     bind_ext(5, ext ? &ext->metallic : nullptr, "uMetallicTex", "uUseMetallic");
     mesh_program_.set1f("uNormalStrength", std::clamp(settings.normal_strength, 0.0f, 2.0f));

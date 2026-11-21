@@ -495,6 +495,8 @@ bool pmxtheme::load_settings(Viewer& v, std::string* err) {
             v.material_ext = flag;
         } else if (key == "normal_strength" && parse_float(value, number)) {
             v.normal_strength = std::clamp(number, 0.0f, 2.0f);
+        } else if (key == "normal_auto" && parse_bool(value, flag)) {
+            v.normal_auto = flag;
         } else if (key == "flesh" && parse_bool(value, flag)) {
             v.flesh = flag;
         } else if (key == "flesh_gpu" && parse_bool(value, flag)) {
@@ -601,6 +603,7 @@ void pmxtheme::save_settings(const Viewer& v) {
         out << "shadow_ground=" << as_bit(v.shadow_ground) << '\n';
         out << "material_ext=" << as_bit(v.material_ext) << '\n';
         out << "normal_strength=" << v.normal_strength << '\n';
+        out << "normal_auto=" << as_bit(v.normal_auto) << '\n';
         out << "flesh=" << as_bit(v.flesh) << '\n';
         out << "flesh_gpu=" << as_bit(v.flesh_gpu) << '\n';
         out << "flesh_range=" << v.flesh_range << '\n';

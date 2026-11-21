@@ -303,6 +303,39 @@ void test_material_ext_candidates() {
           "无扩展名的漫反射贴图也能派生");
 }
 
+void test_generate_normal_map() {
+    std::printf("[材质扩展] 自动生成法线贴图\n");
+    std::vector<unsigned char> flat(8 * 8 * 4, 128);
+    for (int i = 0; i < 8 * 8; ++i) flat[i * 4 + 3] = 255;
+    std::vector<unsigned char> n = pmx::generate_normal_map(flat.data(), 8, 8, 1.0f);
+    check(n.size() == 8 * 8 * 4, "生成法线图尺寸一致");
+    bool neutral = true;
+    for (std::size_t i = 0; i < n.size(); i += 4) {
+        if (n[i] != 128 || n[i + 1] != 128 || n[i + 2] != 255 || n[i + 3] != 255)
+            neutral = false;
+    }
+    check(neutral, "纯色贴图生成平面法线");
+
+    std::vector<unsigned char> ramp(8 * 8 * 4);
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 8; ++x) {
+            const std::size_t i = (static_cast<std::size_t>(y) * 8 + x) * 4;
+            const unsigned char v = static_cast<unsigned char>(x * 36);
+            ramp[i] = ramp[i + 1] = ramp[i + 2] = v;
+            ramp[i + 3] = 255;
+        }
+    }
+    n = pmx::generate_normal_map(ramp.data(), 8, 8, 1.0f);
+    const std::size_t c = (static_cast<std::size_t>(4) * 8 + 4) * 4;
+    check(n[c] < 120, "亮度向右升高时法线偏向 -u");
+    check(n[c + 1] >= 126 && n[c + 1] <= 130, "水平坡度不倾斜 v");
+    check(n[c + 2] > 240, "法线 Z 分量保持向前");
+
+    n = pmx::generate_normal_map(ramp.data(), 8, 8, 0.0f);
+    check(n[c] == 128 && n[c + 1] == 128, "强度 0 关闭凹凸");
+    check(pmx::generate_normal_map(flat.data(), 2, 8, 1.0f).empty(), "尺寸过小不生成");
+}
+
 void test_skinning(const pmx::Model& model) {
     std::printf("[3] CPU 参考蒙皮\n");
     pmx::SkinDeformer deform(model);
@@ -799,6 +832,7 @@ int main(int argc, char** argv) {
         test_bone_category();
         test_orthographic();
         test_material_ext_candidates();
+        test_generate_normal_map();
         test_skinning(model);
         test_flesh();
         test_physics(model);

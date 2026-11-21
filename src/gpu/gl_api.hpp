@@ -75,6 +75,7 @@ constexpr GLenum GL_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE;
 constexpr GLenum GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FF;
 constexpr GLenum GL_TEXTURE_MAX_LEVEL = 0x813D;
 constexpr GLenum GL_UNPACK_ALIGNMENT = 0x0CF5;
+constexpr GLenum GL_PACK_ALIGNMENT = 0x0D05;
 constexpr GLenum GL_VERSION = 0x1F02;
 constexpr GLenum GL_RENDERER = 0x1F01;
 constexpr GLenum GL_VENDOR = 0x1F00;
@@ -188,6 +189,7 @@ constexpr GLenum GL_DRAW_FRAMEBUFFER = 0x8CA9;
     X(void, glGenTextures, (GLsizei, GLuint*))                                     \
     X(void, glBindTexture, (GLenum, GLuint))                                       \
     X(void, glTexImage2D, (GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*)) \
+    X(void, glGetTexImage, (GLenum, GLint, GLenum, GLenum, void*))                 \
     X(void, glTexParameteri, (GLenum, GLenum, GLint))                              \
     X(void, glGenerateMipmap, (GLenum))                                            \
     X(void, glActiveTexture, (GLenum))                                             \

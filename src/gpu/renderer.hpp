@@ -85,6 +85,8 @@ struct RenderSettings {
     // PMX 没有这些通道，按漫反射贴图名的 _normal / _orm / _metallic 约定配对。
     bool material_ext = false;
     float normal_strength = 1.0f;
+    // 缺少法线贴图时，从漫反射贴图亮度自动推导（插件开启时才生效）。
+    bool normal_auto = true;
 
     // 接触式肉体变形（第一阶段）：自接触凹陷 + 周边隆起。
     // 启用后蒙皮走 CPU 路径（需要在求解器里访问顶点位置），区域硬度按骨骼权重生效。
@@ -214,6 +216,8 @@ private:
     struct Texture {
         GLuint id = 0;
         bool valid = false;
+        int width = 0;
+        int height = 0;
         // 贴图自身带显著透明区域（蕾丝/丝袜/发丝高光等）。PMX 里这类材质的
         // diffuse alpha 往往仍是 1，只看材质 alpha 会把它当不透明：低 alpha
         // 像素的黑色 RGB 被原样画出，表现为黑点、黑边。
@@ -225,6 +229,9 @@ private:
         Texture normal;
         Texture orm;
         Texture metallic;
+        // 缺少 _normal 文件时，由漫反射亮度生成的法线（按需生成一次）。
+        Texture auto_normal;
+        bool auto_tried = false;
     };
 
     struct OverlayMesh {
@@ -377,8 +384,12 @@ private:
     Texture& texture_for(const Model& model, int index);
     // 按绝对路径加载并缓存贴图（材质扩展插件用，不经过 PMX 贴图索引）。
     Texture& texture_from_path(const std::string& path);
+    // 上传 RGBA8 像素并设置采样参数；scan_alpha 为 true 时统计透明覆盖。
+    Texture make_texture(const unsigned char* pixels, int w, int h, bool scan_alpha);
     // 材质扩展插件：按漫反射贴图名配对 _normal / _orm / _metallic。
     MaterialExtTexture& material_ext_for(const Model& model, const Material& mt);
+    // 缺少法线贴图时，从漫反射贴图生成一张（首次调用后缓存）。
+    const Texture* auto_normal_for(const std::string& diffuse, MaterialExtTexture& ext);
     // 材质卡通光照用的 toon 贴图：材质自带贴图或内置 toon01..10。
     Texture toon_for(const Model& model, const Material& mt);
     void bind_material(const Model& model, const Material& mt, const RenderSettings& settings);

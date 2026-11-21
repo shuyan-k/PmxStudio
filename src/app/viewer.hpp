@@ -199,6 +199,7 @@ struct Viewer {
     // PMX 没有这些通道，按漫反射贴图名的 _normal / _orm / _metallic 约定配对。
     bool material_ext = false;
     float normal_strength = 1.0f;
+    bool normal_auto = true;
 
     // 接触式肉体变形：自接触凹陷 + 周边隆起。GPU 路径默认开启，
     // 不可用（着色器编译失败 / 无上下文）时自动回退 CPU 多线程。

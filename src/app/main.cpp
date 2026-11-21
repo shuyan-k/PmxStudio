@@ -1271,6 +1271,7 @@ void Viewer::draw_scene(int fb_w, int fb_h) {
     settings.shadow_ground = shadow_ground;
     settings.material_ext = material_ext;
     settings.normal_strength = normal_strength;
+    settings.normal_auto = normal_auto;
 
     // 肉体参数与当前时间轴帧（烘焙缓存按整数帧查找）。
     const pmx::RenderSettings fs = flesh_render_settings();

@@ -32,4 +32,11 @@ struct MaterialExtFiles {
 // 在候选列表中挑选第一个存在的文件；diffuse_path 为空时返回全空。
 MaterialExtFiles find_material_ext(const std::string& diffuse_path);
 
+// 缺少真实法线贴图时，从漫反射贴图亮度推导切线空间法线（DirectX 约定：G 对应 +v）。
+// rgba 为 w*h 的 RGBA8 像素，返回同尺寸 RGBA8 法线图；尺寸不足时返回空。
+// strength 缩放凹凸强度，1.0 为默认。注意：这是从画好的明暗里猜细节，
+// 适合布料/皮革等纹理，脸部彩绘可能产生不自然的凹凸。
+std::vector<unsigned char> generate_normal_map(const unsigned char* rgba, int w, int h,
+                                               float strength = 1.0f);
+
 }  // namespace pmx
