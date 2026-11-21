@@ -302,7 +302,8 @@ struct Viewer {
     // 编辑模式：可修改模型（骨骼 / 材质 / 形态定义 / 物理刚体等）。
     // 预览模式：模型数据只读，只保留视角、物理、动作（VMD）与形态控制，
     // 与 PmxEditor 的预览窗口一致。
-    bool preview_mode = false;
+    // 默认进入预览模式：打开模型即可直接播放动作 / 演算，不误改模型数据。
+    bool preview_mode = true;
     // 预览模式下姿态输入（动作帧 / 形态 / 切换模式）变化后需要重解一次 IK。
     // 静止时不能每帧重解：没有 VMD 每帧重置 base_rot 时，CCD 会在上一帧结果
     // 上继续微调，膝关节等处出现持续的小幅抖动。
@@ -334,8 +335,18 @@ struct Viewer {
     // 取消选择后恢复隐藏。
     bool focus_overlay = false;
 
-    // Ctrl+F：切到预览模式的「检索」标签并把输入焦点放进搜索框。
+    // Ctrl+F：打开「检索」工具窗口并把输入焦点放进搜索框。
     bool focus_preview_search = false;
+
+    // 菜单打开的工具窗口（不再占用检查器页签）。默认全部关闭。
+    bool show_search_window = false;
+    bool show_scene_window = false;
+    bool show_camera_window = false;
+    bool show_light_window = false;
+    bool show_bake_window = false;
+    bool show_output_window = false;
+    bool show_flesh_window = false;
+    bool show_settings_window = false;
 
     // 双击落点附近有多个可选中对象时，在鼠标旁列出候选让用户点选。
     std::vector<pmx::Selection> pick_choices;

@@ -334,8 +334,13 @@ void Viewer::apply_pick(const pmx::Selection& hit) {
     }
     if (hit.kind == pmx::Selection::BONE) {
         select(SelKind::Bone, hit.index);
-        // 预览模式没有「骨骼」页，改揭示「检索」页并把该行滚到中间。
-        reveal_tab = preview_mode ? "检索" : "骨骼";
+        // 预览模式的骨骼列表在独立「检索」窗口里；编辑模式仍有「骨骼」页。
+        if (preview_mode) {
+            show_search_window = true;
+            reveal_tab = nullptr;
+        } else {
+            reveal_tab = "骨骼";
+        }
         status = preview_mode
                      ? "已选中「" + bone_name(hit.index) + "」：左键拖动位移 · 右键拖动旋转"
                      : "已选中「" + bone_name(hit.index) + "」：摆姿请切到预览模式（Ctrl+M）";
@@ -486,12 +491,14 @@ void Viewer::handle_shortcuts() {
     // 退出确认框是模态的：弹窗期间不响应其它快捷键（Esc 由弹窗自己处理）。
     if (close_requested) return;
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_M, false)) set_preview_mode(!preview_mode);
-    // Ctrl+F：预览模式切到「检索」并把输入焦点放进搜索框，方便快速定位骨骼。
+    // Ctrl+, 打开设置窗口（与「编辑 → 设置…」一致）。
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Comma, false)) show_settings_window = true;
+    // Ctrl+F：预览模式打开「检索」工具窗口，方便快速定位骨骼。
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
         if (preview_mode) {
-            reveal_tab = "检索";
-            reveal_frames = 2;
+            show_search_window = true;
             focus_preview_search = true;
+            reveal_selection = false;
         } else {
             status = "编辑模式请用「骨骼」页的搜索框；快速检索并摆姿请切到预览模式（Ctrl+M）";
         }
@@ -860,14 +867,8 @@ void Viewer::draw_ui() {
         if (ImGui::BeginMenu("文件")) {
             if (ImGui::MenuItem("打开 PMX…", "Ctrl+O")) open_pmx();
             const bool has_model = pose != nullptr;
-            if (ImGui::MenuItem("导入 PMX 到场景…", nullptr, false, has_model)) {
-                const std::string path = pick_open_file(kPmxFilter, L"导入场景 PMX");
-                if (!path.empty()) {
-                    std::string err;
-                    if (add_scene_model(path, &err)) error.clear();
-                    else error = err;
-                }
-            }
+            if (ImGui::MenuItem("场景模型…", nullptr, show_scene_window, has_model))
+                show_scene_window = !show_scene_window;
             if (ImGui::MenuItem("导入附件模型…", nullptr, false, has_model)) {
                 const std::string path = pick_open_file(kPmxFilter, L"导入附件 PMX");
                 if (!path.empty()) {
@@ -893,6 +894,13 @@ void Viewer::draw_ui() {
             if (ImGui::MenuItem("导出 VMD…", nullptr, false, can_edit)) export_vmd();
             ImGui::MenuItem("导出全部骨骼", nullptr, &vpd_include_all, can_edit);
             ImGui::Separator();
+            if (pmx::modules().bake &&
+                ImGui::MenuItem("烘焙动作…", nullptr, show_bake_window, has_model))
+                show_bake_window = !show_bake_window;
+            if ((pmx::modules().render_output || pmx::modules().audio) &&
+                ImGui::MenuItem("渲染输出…", nullptr, show_output_window, has_model))
+                show_output_window = !show_output_window;
+            ImGui::Separator();
             if (ImGui::MenuItem("退出", "Alt+F4")) {
                 // 有未保存修改时先弹确认框，由 draw_close_confirm 决定是否真的退出。
                 if (dirty || motion_dirty_edit || camera_motion.dirty) {
@@ -901,6 +909,26 @@ void Viewer::draw_ui() {
                     glfwSetWindowShouldClose(current, 1);
                 }
             }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("编辑")) {
+            ImGui::BeginDisabled(!can_undo());
+            if (ImGui::MenuItem("撤销", "Ctrl+Z")) undo();
+            ImGui::EndDisabled();
+            ImGui::BeginDisabled(!can_redo());
+            if (ImGui::MenuItem("重做", "Ctrl+Y")) redo();
+            ImGui::EndDisabled();
+            ImGui::Separator();
+            if (ImGui::MenuItem("检索…", "Ctrl+F", show_search_window,
+                                preview_mode && pose != nullptr)) {
+                show_search_window = !show_search_window;
+                if (show_search_window) {
+                    focus_preview_search = true;
+                    reveal_selection = false;
+                }
+            }
+            if (ImGui::MenuItem("设置…", nullptr, show_settings_window))
+                show_settings_window = !show_settings_window;
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("视图")) {
@@ -934,6 +962,13 @@ void Viewer::draw_ui() {
             if (ImGui::MenuItem("卡通光照", nullptr, &flat_toon))
                 toon = flat_toon ? 1.0f : 0.0f;
             ImGui::Separator();
+            if (ImGui::MenuItem("相机…", nullptr, show_camera_window, pose != nullptr))
+                show_camera_window = !show_camera_window;
+            if (ImGui::MenuItem("灯光…", nullptr, show_light_window))
+                show_light_window = !show_light_window;
+            if (kFleshEnabled && ImGui::MenuItem("肉体…", nullptr, show_flesh_window))
+                show_flesh_window = !show_flesh_window;
+            ImGui::Separator();
             if (ImGui::MenuItem("重置姿态", "R")) reset_pose();
             if (ImGui::MenuItem("相机居中", "F")) fit_camera();
             if (ImGui::MenuItem("物理演算", "P", physics_enabled)) {
@@ -960,11 +995,7 @@ void Viewer::draw_ui() {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("帮助")) {
-            if (ImGui::MenuItem("快捷键…")) {
-                // 快捷键表在「设置」标签里，直接切过去。
-                reveal_tab = "设置";
-                reveal_frames = 2;
-            }
+            if (ImGui::MenuItem("设置与快捷键…")) show_settings_window = true;
             ImGui::Separator();
             ImGui::TextDisabled("PmxStudio " PMXSTUDIO_VERSION " · GPLv3");
             ImGui::EndMenu();
@@ -1124,24 +1155,16 @@ void Viewer::draw_ui() {
             }
         };
         if (preview_mode) {
-            // 预览模式只保留控制类标签：检索、动作、时间线、相机、烘焙、输出、物理、形态、灯光、设置。
-            tab("检索", &panel_preview_search);
-            tab("场景", &panel_scene);
+            // 预览模式只保留高频控制：动作、时间线、形态、物理、附件。
+            // 检索 / 场景 / 相机 / 灯光 / 烘焙 / 输出 / 设置 改为菜单打开的工具窗口。
             tab("动作", &panel_motion);
             if (pmx::modules().timeline) tab("时间线", &panel_timeline);
-            if (pmx::modules().timeline) tab("相机", &panel_camera);
-            if (pmx::modules().bake) tab("烘焙", &panel_bake);
-            if (pmx::modules().render_output || pmx::modules().audio)
-                tab("输出", &panel_output);
-            tab("物理", &panel_preview_physics);
             tab("形态", &panel_preview_morph);
+            tab("物理", &panel_preview_physics);
             tab("附件", &panel_accessory);
-            tab("灯光", &panel_light);
-            if (kFleshEnabled) tab("肉体", &panel_flesh);
-            tab("设置", &panel_settings);
         } else {
+            // 编辑模式保留数据编辑页；场景 / 灯光 / 肉体 / 设置 同样移到菜单。
             tab("信息", &panel_info);
-            tab("场景", &panel_scene);
             tab("骨骼", &panel_bone);
             tab("表示枠", &panel_frame);
             tab("顶点", &panel_vertex);
@@ -1151,18 +1174,43 @@ void Viewer::draw_ui() {
             tab("物理", &panel_physics);
             tab("柔体", &panel_soft);
             tab("附件", &panel_accessory);
-            tab("灯光", &panel_light);
-            if (kFleshEnabled) tab("肉体", &panel_flesh);
-            tab("设置", &panel_settings);
         }
         ImGui::EndTabBar();
     }
-    // 标签切换在下一帧生效，保持两帧后清零，避免一直强制选中。
+    ImGui::End();
+
+    // ------------------------------------------------------------ 工具窗口
+    // 低频功能从检查器页签移出，按需从菜单打开；默认全部关闭，避免主面板臃肿。
+    const ImVec2 viewport_center = ImGui::GetMainViewport()->GetCenter();
+    auto tool_window = [&](const char* title, const char* id, bool* open, void (*fn)(Viewer&),
+                           float width, float height) {
+        if (!*open) return;
+        const std::string label = std::string(title) + "###" + id;
+        ImGui::SetNextWindowPos(viewport_center, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(pmxui::scale(width), pmxui::scale(height)),
+                                 ImGuiCond_FirstUseEver);
+        if (ImGui::Begin(label.c_str(), open, ImGuiWindowFlags_NoCollapse)) fn(*this);
+        ImGui::End();
+    };
+    if (preview_mode && pose)
+        tool_window("检索", "search_window", &show_search_window, &panel_preview_search, 420, 520);
+    tool_window("场景模型", "scene_window", &show_scene_window, &panel_scene, 460, 420);
+    tool_window("相机", "camera_window", &show_camera_window, &panel_camera, 440, 560);
+    tool_window("灯光", "light_window", &show_light_window, &panel_light, 420, 520);
+    if (pmx::modules().bake)
+        tool_window("烘焙", "bake_window", &show_bake_window, &panel_bake, 440, 400);
+    if (pmx::modules().render_output || pmx::modules().audio)
+        tool_window("渲染输出", "output_window", &show_output_window, &panel_output, 500, 620);
+    if (kFleshEnabled)
+        tool_window("肉体", "flesh_window", &show_flesh_window, &panel_flesh, 460, 640);
+    tool_window("设置", "settings_window", &show_settings_window, &panel_settings, 560, 640);
+
+    // 标签切换要等下一帧 TabBarLayout 才生效，保持两帧后清零，避免一直强制选中。
+    // 放在工具窗口之后，保证双击选中时检索窗口也能拿到两帧滚动机会。
     if (reveal_frames > 0 && --reveal_frames == 0) {
         reveal_tab = nullptr;
         reveal_selection = false;
     }
-    ImGui::End();
 }
 
 void Viewer::draw_close_confirm() {
@@ -1858,7 +1906,7 @@ static int run_viewer(const std::vector<std::string>& args) {
         return 1;
     }
 
-    std::string initial = args.size() > 1 ? args[1] : viewer.model_path;
+    std::string initial = viewer.model_path;
     // 命令行选项：--api 启动 Agent API，--api-port N（或 --api-port=N）指定端口，
     // --no-plugins 跳过插件加载；其余非选项参数视为模型路径。
     bool api_enabled = false;
