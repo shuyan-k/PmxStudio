@@ -2214,11 +2214,10 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
         alpha_ranges_.clear();
         std::vector<int>& opaque = opaque_ranges_;
         std::vector<int>& alpha = alpha_ranges_;
-        // PMX 面片在右手系视图里是逆时针朝外。此前误设为 CW，会把所有单面材质
-        // 的背面当成正面绘制：脸部/眼睛/嘴这些细节层被背面剔除吃掉（只剩空眼
-        // 白和贴图里张开的嘴），衣物的法线也随之反转、越画越亮（深色海军蓝变
-        // 成浅紫）。这里必须用 CCW。
-        glFrontFace(glc::GL_CCW);
+        // 相机视图是左手系（OrbitCamera::view 把相机 X 轴取反），MMD 的面片
+        // 在屏幕上顺时针朝外，正面剔除必须用 CW。用 CCW 会把所有单面材质的
+        // 外表面当成背面剔掉（脸部/眼睛细节消失、衣物法线反转）。
+        glFrontFace(glc::GL_CW);
         // 相机位置与视图矩阵是全局 uniform，逐材质只改材质参数。
         mesh_program_.use();
         mesh_program_.set_mat4("uView", view);
@@ -2395,10 +2394,11 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
             glDisable(glc::GL_BLEND);
         }
         glBindVertexArray(0);
-        glFrontFace(glc::GL_CCW);
     }
 
     // ---- 叠加层（半透明实体，不写深度；关闭深度测试使骨骼/刚体不被模型遮挡）
+    // 骨骼/刚体/关节与网格同为 MMD 朝外绕序，在镜像相机下同样用 CW。
+    glFrontFace(glc::GL_CW);
     glPolygonMode(glc::GL_FRONT_AND_BACK, glc::GL_FILL);
     glEnable(glc::GL_BLEND);
     glBlendFunc(glc::GL_SRC_ALPHA, glc::GL_ONE_MINUS_SRC_ALPHA);
@@ -2489,6 +2489,7 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
     glEnable(glc::GL_DEPTH_TEST);
     glDisable(glc::GL_BLEND);
     glPolygonMode(glc::GL_FRONT_AND_BACK, glc::GL_FILL);
+    glFrontFace(glc::GL_CCW);
     glBindBuffer(glc::GL_SHADER_STORAGE_BUFFER, 0);
 }
 

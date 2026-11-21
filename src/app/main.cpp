@@ -666,8 +666,10 @@ void Viewer::handle_input(GLFWwindow* window, int fb_w, int fb_h) {
                     // 旋转只改末端朝向：关闭会被这次旋转牵动的 IK 链，避免原点被 IK 拉走。
                     mute_conflicting_ik(drag_bone);
                 }
-                pose->rotate_world(drag_bone, pmx::Vec3{0.0f, 1.0f, 0.0f}, dx * 0.012f);
-                pose->rotate_world(drag_bone, camera.right(), dy * 0.012f);
+                // 视图是左手系镜像，屏幕拖动方向对应的世界旋转取反，
+                // 保持原来的「抓住骨骼拖动」手感。
+                pose->rotate_world(drag_bone, pmx::Vec3{0.0f, 1.0f, 0.0f}, -dx * 0.012f);
+                pose->rotate_world(drag_bone, camera.right(), -dy * 0.012f);
                 remember_manual_pose(drag_bone);
                 pose->solve_ik();
                 pose->world();

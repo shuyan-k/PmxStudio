@@ -18,13 +18,19 @@ Mat4 OrbitCamera::view() const {
     if (std::fabs(dot(f, up)) > 0.999f) up = Vec3(0.0f, 0.0f, 1.0f);
     const Vec3 s = normalize(cross(f, up));
     const Vec3 u = cross(s, f);
+    // MMD 是左手坐标系：从正面看时世界 +X 应在画面右侧。右手 look-at 的
+    // 相机 +X 轴是 cross(f, up)（正视图时指向世界 -X），直接渲染会得到与
+    // MMD 左右镜像的模型（发饰、单侧花纹都反了）。这里把相机 X 轴取反，
+    // 等价于用左手系相机观察原始 PMX 数据；镜像会翻转三角形绕序，网格
+    // 绘制需相应用 glFrontFace(GL_CW)。
+    const Vec3 r = -s;
     Mat4 m;
     for (int c = 0; c < 3; ++c) {
-        m.at(0, c) = s[c];
+        m.at(0, c) = r[c];
         m.at(1, c) = u[c];
         m.at(2, c) = -f[c];
     }
-    m.at(0, 3) = -dot(s, e);
+    m.at(0, 3) = -dot(r, e);
     m.at(1, 3) = -dot(u, e);
     m.at(2, 3) = dot(f, e);
     return m;
@@ -51,7 +57,8 @@ Vec3 OrbitCamera::up_vec() const {
 }
 
 void OrbitCamera::orbit(float dx, float dy) {
-    yaw -= dx * 0.0075f;
+    // 视图是左手系镜像，屏幕右移对应 yaw 增大，保持「抓住场景拖动」的手感。
+    yaw += dx * 0.0075f;
     pitch = clampf(pitch + dy * 0.0065f, -1.52f, 1.52f);
 }
 

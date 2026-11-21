@@ -183,6 +183,12 @@ if(PMX_BUILD_TESTS)
         PMX_TEST_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/tests/test_model.pmx")
     add_test(NAME core COMMAND pmx_tests)
 
+    # 相机视图约定：正视图下世界 +X 必须在画面右侧（MMD 左手坐标系），
+    # 防止再次出现模型与 MMD 左右镜像的问题。相机只依赖 pmx_core，可单独链接。
+    add_executable(pmx_tests_camera tests/test_camera.cpp src/app/camera.cpp)
+    target_link_libraries(pmx_tests_camera PRIVATE pmx_core)
+    add_test(NAME camera COMMAND pmx_tests_camera)
+
     # 与 Python 版做读写一致性校验的命令行探针（tools/parity_check.py 调用）。
     add_executable(pmx_parity_probe tests/parity_probe.cpp)
     target_link_libraries(pmx_parity_probe PRIVATE pmx_core)
