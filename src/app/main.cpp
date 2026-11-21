@@ -911,7 +911,7 @@ void Viewer::draw_ui() {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("编辑")) {
+        if (ImGui::BeginMenu("编辑##edit_menu")) {
             ImGui::BeginDisabled(!can_undo());
             if (ImGui::MenuItem("撤销", "Ctrl+Z")) undo();
             ImGui::EndDisabled();
