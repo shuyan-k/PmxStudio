@@ -334,9 +334,9 @@ void Viewer::apply_pick(const pmx::Selection& hit) {
     }
     if (hit.kind == pmx::Selection::BONE) {
         select(SelKind::Bone, hit.index);
-        // 预览模式的骨骼列表在独立「检索」窗口里；编辑模式仍有「骨骼」页。
+        // 预览模式的骨骼列表在独立「检索」窗口里；选中骨骼只做视口高亮，
+        // 不自动弹出该窗口（需要时用 Ctrl+F 或「视图 → 检索…」打开）。
         if (preview_mode) {
-            show_search_window = true;
             reveal_tab = nullptr;
         } else {
             reveal_tab = "骨骼";
@@ -931,9 +931,12 @@ void Viewer::draw_ui() {
                 ImGui::TextDisabled("按分类显示");
                 for (int c = 0; c < pmx::kBoneCategoryCount; ++c) {
                     bool on = bone_category_visible[static_cast<std::size_t>(c)];
-                    if (ImGui::MenuItem(pmx::bone_category_name(static_cast<pmx::BoneCategory>(c)),
-                                        nullptr, &on))
+                    ImGui::PushID(c);
+                    // 用复选框而不是 MenuItem：点一次菜单不会自动关闭，可以连续开关多个分类。
+                    if (ImGui::Checkbox(pmx::bone_category_name(static_cast<pmx::BoneCategory>(c)),
+                                        &on))
                         set_bone_category_visible(c, on);
+                    ImGui::PopID();
                 }
                 ImGui::EndMenu();
             }
