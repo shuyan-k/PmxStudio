@@ -33,3 +33,5 @@ void panel_output(Viewer& v);
 void panel_bake(Viewer& v);
 // 附件：额外加载一个 PMX（如头部挂饰），绑定到主模型骨骼跟随运动。
 void panel_accessory(Viewer& v);
+// 场景：主模型之外再导入多个 PMX，各自摆放 / 物理 / 显示开关。
+void panel_scene(Viewer& v);

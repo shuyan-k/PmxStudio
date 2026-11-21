@@ -150,9 +150,10 @@ public:
     // 只刷新 [first, nv) 这段顶点的位置 / 法线（附件变换用，避免整模型重建）。
     void update_vertex_range(const Model& model, std::size_t first);
 
+    // clear=false 时不清颜色/深度，用于把多个模型依次追加到同一画面（多模型场景）。
     void render(const Model& model, Pose& pose, Physics* physics, const Mat4& view,
                 const Mat4& proj, int width, int height, const RenderSettings& settings,
-                const Selection& selection);
+                const Selection& selection, bool clear = true);
 
     // 烘焙单帧：按当前姿态计算蒙皮 + 肉体结果并写入缓存（不依赖 GL 状态）。
     bool bake_flesh_frame(const Model& model, Pose& pose, const RenderSettings& settings,

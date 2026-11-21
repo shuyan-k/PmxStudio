@@ -168,6 +168,8 @@ bool Viewer::load_model(const std::string& path, std::string* err) {
     accessory_loaded = false;
     accessory_bone = -1;
     accessory_vertex_base = 0;
+    // 换主模型等同重开场景：额外导入的模型一并清空，避免旧场景残留。
+    clear_scene_models();
     morph_values.assign(model.morphs.size(), 0.0f);
     morph_weights.clear();
     morph_dirty = true;
@@ -424,9 +426,15 @@ std::string Viewer::bone_name(int index) const {
 void Viewer::fit_camera() {
     if (model.vertices.pos.empty()) return;
     pmx::Vec3 lo = model.vertices.pos[0], hi = lo;
-    for (const pmx::Vec3& p : model.vertices.pos) {
+    auto include = [&lo, &hi](const pmx::Vec3& p) {
         lo.x = std::min(lo.x, p.x); lo.y = std::min(lo.y, p.y); lo.z = std::min(lo.z, p.z);
         hi.x = std::max(hi.x, p.x); hi.y = std::max(hi.y, p.y); hi.z = std::max(hi.z, p.z);
+    };
+    for (const pmx::Vec3& p : model.vertices.pos) include(p);
+    // 多模型场景：取景要覆盖所有可见的场景模型，而不是只框住主模型。
+    for (const SceneModel& sm : scene_models) {
+        if (!sm.visible) continue;
+        for (const pmx::Vec3& p : sm.model.vertices.pos) include(p);
     }
     camera.fit(lo, hi);
 }
@@ -845,6 +853,14 @@ void Viewer::draw_ui() {
         if (ImGui::BeginMenu("文件")) {
             if (ImGui::MenuItem("打开 PMX…", "Ctrl+O")) open_pmx();
             const bool has_model = pose != nullptr;
+            if (ImGui::MenuItem("导入 PMX 到场景…", nullptr, false, has_model)) {
+                const std::string path = pick_open_file(kPmxFilter, L"导入场景 PMX");
+                if (!path.empty()) {
+                    std::string err;
+                    if (add_scene_model(path, &err)) error.clear();
+                    else error = err;
+                }
+            }
             if (ImGui::MenuItem("导入附件模型…", nullptr, false, has_model)) {
                 const std::string path = pick_open_file(kPmxFilter, L"导入附件 PMX");
                 if (!path.empty()) {
@@ -951,10 +967,14 @@ void Viewer::draw_ui() {
 
     // ------------------------------------------------------------ 底部状态栏
     char stats[256];
+    char scene_info[32] = "";
+    if (!scene_models.empty())
+        std::snprintf(scene_info, sizeof scene_info, " · 场景 %zu",
+                      scene_models.size());
     std::snprintf(stats, sizeof stats,
-                  "FPS %.1f · 顶点 %zu · 三角面 %zu · 骨骼 %zu · 刚体 %zu · 关节 %zu · 视距 %.1f",
+                  "FPS %.1f · 顶点 %zu · 三角面 %zu · 骨骼 %zu · 刚体 %zu · 关节 %zu · 视距 %.1f%s",
                   fps, model.vertices.size(), model.n_faces(), model.bones.size(),
-                  model.rigid.size(), model.joints.size(), camera.distance);
+                  model.rigid.size(), model.joints.size(), camera.distance, scene_info);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
@@ -1099,6 +1119,7 @@ void Viewer::draw_ui() {
         if (preview_mode) {
             // 预览模式只保留控制类标签：检索、动作、时间线、相机、烘焙、输出、物理、形态、灯光、设置。
             tab("检索", &panel_preview_search);
+            tab("场景", &panel_scene);
             tab("动作", &panel_motion);
             if (pmx::modules().timeline) tab("时间线", &panel_timeline);
             if (pmx::modules().timeline) tab("相机", &panel_camera);
@@ -1113,6 +1134,7 @@ void Viewer::draw_ui() {
             tab("设置", &panel_settings);
         } else {
             tab("信息", &panel_info);
+            tab("场景", &panel_scene);
             tab("骨骼", &panel_bone);
             tab("表示枠", &panel_frame);
             tab("顶点", &panel_vertex);
@@ -1292,8 +1314,12 @@ void Viewer::draw_scene(int fb_w, int fb_h) {
         return;
     }
     const float aspect = static_cast<float>(fb_w) / static_cast<float>(std::max(1, fb_h));
-    renderer.render(active_model(), *pose, physics_ptr, camera.view(), camera.projection(aspect),
-                    fb_w, fb_h, settings, selection);
+    const pmx::Mat4 view = camera.view();
+    const pmx::Mat4 proj = camera.projection(aspect);
+    renderer.render(active_model(), *pose, physics_ptr, view, proj, fb_w, fb_h, settings,
+                    selection);
+    // 多模型场景：在同一个目标上追加其余模型（各自保留地面投影）。
+    render_scene_models(settings, view, proj, fb_w, fb_h);
     // GPU 肉体是否可用 / 本帧是否命中，反馈给面板显示。
     flesh_gpu_available = renderer.flesh_gpu_available();
     flesh_gpu_active = renderer.flesh_gpu_active();
@@ -1641,8 +1667,7 @@ void Viewer::toggle_camera_view() {
 void on_drop(GLFWwindow* window, int count, const char** paths) {
     auto* viewer = static_cast<Viewer*>(glfwGetWindowUserPointer(window));
     if (!viewer || count <= 0) return;
-    std::string path = paths[0];
-    auto ends = [&path](const char* ext) {
+    auto ends = [](const std::string& path, const char* ext) {
         const std::size_t n = std::strlen(ext);
         return path.size() >= n &&
                std::equal(ext, ext + n, path.end() - n,
@@ -1651,14 +1676,42 @@ void on_drop(GLFWwindow* window, int count, const char** paths) {
                                      std::tolower(static_cast<unsigned char>(b));
                           });
     };
-    if (ends(".pmx")) {
-        std::string err;
-        if (!viewer->load_model(path, &err)) viewer->error = err;
-    } else if (ends(".vpd")) {
+
+    // 一次拖入多个 PMX：没有主模型时第一个作为主模型，其余追加到场景；
+    // 已有主模型时全部作为场景模型追加。
+    std::vector<std::string> pmx_paths;
+    for (int i = 0; i < count; ++i) {
+        const std::string path = paths[i];
+        if (ends(path, ".pmx")) pmx_paths.push_back(path);
+    }
+    if (!pmx_paths.empty()) {
+        std::size_t begin = 0;
+        if (!viewer->pose) {
+            std::string err;
+            if (!viewer->load_model(pmx_paths[0], &err)) {
+                viewer->error = err;
+                return;
+            }
+            begin = 1;
+        }
+        for (; begin < pmx_paths.size(); ++begin) {
+            std::string err;
+            if (!viewer->add_scene_model(pmx_paths[begin], &err)) {
+                viewer->error = err;
+                return;
+            }
+        }
+        viewer->error.clear();
+        viewer->status = "已载入 " + std::to_string(pmx_paths.size()) + " 个 PMX";
+        return;
+    }
+
+    const std::string path = paths[0];
+    if (ends(path, ".vpd")) {
         std::string err;
         if (!viewer->apply_vpd_file(path, &err)) viewer->error = err;
         else viewer->error.clear();
-    } else if (ends(".vmd")) {
+    } else if (ends(path, ".vmd")) {
         std::string err;
         if (!viewer->load_vmd_file(path, &err)) viewer->error = err;
         else viewer->error.clear();
@@ -1996,6 +2049,8 @@ static int run_viewer(const std::vector<std::string>& args) {
             if (!viewer.export_job.active)
                 viewer.update_accessory_frame(physics_dt);
         }
+        // 多模型场景：额外模型各自求值（静止姿态 + 物理）；导出时由导出循环推进。
+        if (!viewer.export_job.active) viewer.update_scene_models(physics_dt);
 
         {
             pmx::ProfileTimer skin_timer(pmx::ProfileScope::Skin);

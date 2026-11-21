@@ -953,6 +953,8 @@ JsonValue cmd_scene_state(const Viewer& viewer) {
     pmx::json_set(out, "preview_mode", pmx::json_bool(viewer.preview_mode));
     pmx::json_set(out, "camera_view", pmx::json_bool(viewer.camera_view));
     pmx::json_set(out, "physics_enabled", pmx::json_bool(viewer.physics_enabled));
+    pmx::json_set(out, "scene_models",
+                  pmx::json_number(static_cast<double>(viewer.scene_models.size())));
     pmx::json_set(out, "frames", pmx::json_number(viewer.frames));
     pmx::json_set(out, "fps", pmx::json_number(viewer.fps));
     pmx::json_set(out, "can_undo", pmx::json_bool(viewer.can_undo()));
@@ -964,6 +966,110 @@ JsonValue cmd_scene_state(const Viewer& viewer) {
     set_string(out, "status", viewer.status);
     set_string(out, "error", viewer.error);
     return out;
+}
+
+JsonValue scene_models_json(const Viewer& viewer) {
+    JsonValue list = pmx::json_array();
+    {
+        JsonValue main_model = pmx::json_object();
+        pmx::json_set(main_model, "index", pmx::json_number(0));
+        pmx::json_set(main_model, "main", pmx::json_bool(true));
+        set_string(main_model, "name", viewer.model.name);
+        set_string(main_model, "path", viewer.model_path);
+        pmx::json_set(main_model, "visible", pmx::json_bool(true));
+        pmx::json_set(main_model, "position", vec3_json({0.0f, 0.0f, 0.0f}));
+        pmx::json_set(main_model, "yaw", pmx::json_number(0));
+        pmx::json_set(main_model, "scale", pmx::json_number(1));
+        pmx::json_set(main_model, "bones",
+                      pmx::json_number(static_cast<double>(viewer.model.bones.size())));
+        pmx::json_push(list, main_model);
+    }
+    for (std::size_t i = 0; i < viewer.scene_models.size(); ++i) {
+        const SceneModel& sm = viewer.scene_models[i];
+        JsonValue item = pmx::json_object();
+        pmx::json_set(item, "index", pmx::json_number(static_cast<double>(i + 1)));
+        pmx::json_set(item, "main", pmx::json_bool(false));
+        set_string(item, "name", sm.name);
+        set_string(item, "path", sm.path);
+        pmx::json_set(item, "visible", pmx::json_bool(sm.visible));
+        pmx::json_set(item, "position", vec3_json({sm.pos[0], sm.pos[1], sm.pos[2]}));
+        pmx::json_set(item, "yaw", pmx::json_number(sm.yaw));
+        pmx::json_set(item, "scale", pmx::json_number(sm.scale));
+        pmx::json_set(item, "bones",
+                      pmx::json_number(static_cast<double>(sm.model.bones.size())));
+        pmx::json_push(list, item);
+    }
+    JsonValue out = pmx::json_object();
+    pmx::json_set(out, "count",
+                  pmx::json_number(static_cast<double>(viewer.scene_models.size() + 1)));
+    pmx::json_set(out, "models", list);
+    return out;
+}
+
+JsonValue cmd_scene_model_add(Viewer& viewer, const JsonValue& params) {
+    if (!viewer.pose) throw ApiError{"先加载主模型再导入场景模型"};
+    const std::string path = require_string(params, "path");
+    const float scale = optional_float(params, "scale", 1.0f);
+    if (!(scale > 0.0f)) throw ApiError{"参数 \"scale\" 必须大于 0"};
+    std::string error;
+    if (!viewer.add_scene_model(path, &error)) throw ApiError{error};
+    SceneModel& sm = viewer.scene_models.back();
+    sm.visible = optional_bool(params, "visible", true);
+    bool transform_changed = false;
+    if (const JsonValue* node = params.find("position")) {
+        const pmx::Vec3 p = read_vec3(*node, "position");
+        sm.pos[0] = p.x;
+        sm.pos[1] = p.y;
+        sm.pos[2] = p.z;
+        transform_changed = true;
+    }
+    const float yaw = optional_float(params, "yaw", sm.yaw);
+    if (yaw != sm.yaw || scale != sm.scale) {
+        sm.yaw = yaw;
+        sm.scale = scale;
+        transform_changed = true;
+    }
+    if (transform_changed &&
+        !viewer.rebuild_scene_model(static_cast<int>(viewer.scene_models.size()) - 1,
+                                    &error))
+        throw ApiError{error};
+    return scene_models_json(viewer);
+}
+
+JsonValue cmd_scene_model_set(Viewer& viewer, const JsonValue& params) {
+    const int index = optional_int(params, "index", -1);
+    if (index <= 0 || index > static_cast<int>(viewer.scene_models.size()))
+        throw ApiError{"index 必须是场景模型序号（1 = 第一个额外模型）"};
+    SceneModel& sm = viewer.scene_models[static_cast<std::size_t>(index - 1)];
+    sm.visible = optional_bool(params, "visible", sm.visible);
+    bool transform_changed = false;
+    if (const JsonValue* node = params.find("position")) {
+        const pmx::Vec3 p = read_vec3(*node, "position");
+        sm.pos[0] = p.x;
+        sm.pos[1] = p.y;
+        sm.pos[2] = p.z;
+        transform_changed = true;
+    }
+    const float yaw = optional_float(params, "yaw", sm.yaw);
+    const float scale = optional_float(params, "scale", sm.scale);
+    if (!(scale > 0.0f)) throw ApiError{"参数 \"scale\" 必须大于 0"};
+    if (yaw != sm.yaw || scale != sm.scale) {
+        sm.yaw = yaw;
+        sm.scale = scale;
+        transform_changed = true;
+    }
+    std::string error;
+    if (transform_changed && !viewer.rebuild_scene_model(index - 1, &error))
+        throw ApiError{error};
+    return scene_models_json(viewer);
+}
+
+JsonValue cmd_scene_model_remove(Viewer& viewer, const JsonValue& params) {
+    const int index = require_index(params, static_cast<int>(viewer.scene_models.size()) + 1,
+                                    "场景模型");
+    if (index == 0) throw ApiError{"不能移除主模型"};
+    viewer.remove_scene_model(index - 1);
+    return scene_models_json(viewer);
 }
 
 JsonValue cmd_scene_camera(Viewer& viewer, const JsonValue& params) {
@@ -1008,16 +1114,20 @@ JsonValue cmd_scene_render(Viewer& viewer, const JsonValue& params) {
     viewer.pose->world();
     // 单帧渲染也刷新附件（dt=0 不推进物理，只保证骨骼姿态与网格一致）。
     viewer.update_accessory_frame(0.0f);
+    viewer.update_scene_models(0.0f);
 
     pmx::OffscreenTarget target;
     std::string error;
     if (!target.resize(width, height, samples, &error))
         throw ApiError{"创建离屏渲染目标失败：" + error};
     const float aspect = static_cast<float>(width) / static_cast<float>(std::max(1, height));
+    const pmx::Mat4 view = viewer.camera.view();
+    const pmx::Mat4 proj = viewer.camera.projection(aspect);
+    const pmx::RenderSettings settings = render_settings(viewer, overlays);
     target.bind();
-    viewer.renderer.render(viewer.active_model(), *viewer.pose, nullptr, viewer.camera.view(),
-                           viewer.camera.projection(aspect), width, height,
-                           render_settings(viewer, overlays), pmx::Selection{});
+    viewer.renderer.render(viewer.active_model(), *viewer.pose, nullptr, view, proj, width,
+                           height, settings, pmx::Selection{});
+    viewer.render_scene_models(settings, view, proj, width, height);
     std::vector<std::uint8_t> rgba;
     const bool read_ok = target.read_rgba(width, height, rgba, &error);
     target.unbind();
@@ -1459,6 +1569,10 @@ JsonValue dispatch(Viewer& viewer, const std::string& method, const JsonValue& p
     }
 
     if (method == "scene.state") return cmd_scene_state(viewer);
+    if (method == "scene.models") return scene_models_json(viewer);
+    if (method == "scene.model_add") return cmd_scene_model_add(viewer, params);
+    if (method == "scene.model_set") return cmd_scene_model_set(viewer, params);
+    if (method == "scene.model_remove") return cmd_scene_model_remove(viewer, params);
     if (method == "scene.mode") {
         if (!viewer.pose) throw ApiError{"尚未加载模型"};
         viewer.set_preview_mode(optional_bool(params, "preview", viewer.preview_mode));
