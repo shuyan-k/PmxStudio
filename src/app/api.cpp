@@ -1122,7 +1122,12 @@ JsonValue cmd_scene_render(Viewer& viewer, const JsonValue& params) {
     }
     if (viewer.morph_dirty) viewer.apply_morphs();
     else viewer.pose->apply(&viewer.morph_weights);
-    if (viewer.preview_mode) viewer.pose->solve_ik();
+    // 渲染是只读快照：只在新姿态输入后补一次 IK，不能每次渲染都重解，
+    // 否则没有 VMD 重置 base_rot 时 CCD 会在旧结果上继续微调，画面出现抖动。
+    if (viewer.preview_mode && viewer.ik_dirty) {
+        viewer.pose->solve_ik();
+        viewer.ik_dirty = false;
+    }
     viewer.pose->world();
     // 单帧渲染也刷新附件（dt=0 不推进物理，只保证骨骼姿态与网格一致）。
     viewer.update_accessory_frame(0.0f);
@@ -1300,31 +1305,42 @@ JsonValue cmd_bone_pose(Viewer& viewer, const JsonValue& params) {
     if (!viewer.pose) throw ApiError{"尚未加载模型"};
     const int index = resolve_bone(viewer.model, params);
     pmx::Pose& pose = *viewer.pose;
+    bool changed = false;
 
     if (optional_bool(params, "reset", false)) {
         pose.ov_rot.erase(index);
         pose.ov_trans.erase(index);
+        changed = true;
     } else {
         if (const JsonValue* rotation = params.find("rotation")) {
             const pmx::Vec4 q = read_vec4(*rotation, "rotation");
             if (std::fabs(q.x) + std::fabs(q.y) + std::fabs(q.z) + std::fabs(q.w) < 1e-8f)
                 throw ApiError{"rotation 不能是零四元数"};
             pose.ov_rot[index] = pmx::normalize(pmx::Quat(q.x, q.y, q.z, q.w));
+            changed = true;
         } else if (const JsonValue* euler = params.find("euler")) {
             const pmx::Vec3 angles = read_vec3(*euler, "euler");
             constexpr float kDegToRad = pmx::kPi / 180.0f;
             pose.ov_rot[index] = pmx::euler_to_quat(angles.x * kDegToRad, angles.y * kDegToRad,
                                                     angles.z * kDegToRad);
+            changed = true;
         }
-        if (const JsonValue* translation = params.find("translation"))
+        if (const JsonValue* translation = params.find("translation")) {
             pose.ov_trans[index] = read_vec3(*translation, "translation");
+            changed = true;
+        }
     }
-    if (has(params, "ik_enabled"))
+    if (has(params, "ik_enabled")) {
         pose.set_ik_enabled(index, optional_bool(params, "ik_enabled", true));
+        changed = true;
+    }
 
     if (viewer.morph_dirty) viewer.apply_morphs();
     else pose.apply(&viewer.morph_weights);
-    if (viewer.preview_mode) pose.solve_ik();
+    if (viewer.preview_mode && (changed || viewer.ik_dirty)) {
+        pose.solve_ik();
+        viewer.ik_dirty = false;
+    }
     pose.world();
 
     const pmx::Bone& bone = viewer.model.bones[static_cast<std::size_t>(index)];

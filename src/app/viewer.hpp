@@ -303,6 +303,10 @@ struct Viewer {
     // 预览模式：模型数据只读，只保留视角、物理、动作（VMD）与形态控制，
     // 与 PmxEditor 的预览窗口一致。
     bool preview_mode = false;
+    // 预览模式下姿态输入（动作帧 / 形态 / 切换模式）变化后需要重解一次 IK。
+    // 静止时不能每帧重解：没有 VMD 每帧重置 base_rot 时，CCD 会在上一帧结果
+    // 上继续微调，膝关节等处出现持续的小幅抖动。
+    bool ik_dirty = true;
     void set_preview_mode(bool preview);
 
     // 关闭请求（窗口 X / Alt+F4 / 菜单「退出」）：有未保存修改时先弹确认框。

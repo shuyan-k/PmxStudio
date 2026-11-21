@@ -149,6 +149,8 @@ bool Viewer::load_model(const std::string& path, std::string* err) {
         return false;
     }
     pose = std::make_unique<pmx::Pose>(model);
+    // 新模型的 IK 还没求过；预览模式下让主循环补解一次。
+    ik_dirty = true;
     // 换模型后重建骨骼显示分类（手动覆盖随旧模型一起丢弃）。
     refresh_bone_categories(true);
     // 换模型后附件的锚点骨骼索引失效，直接清掉（含自带骨骼 / 物理运行时）。
@@ -220,6 +222,8 @@ void Viewer::apply_morphs() {
     renderer.update_base(am, vm);
     if (pose) pose->apply(&weights);
     morph_dirty = false;
+    // 骨骼形态可能改了 IK 链上的骨骼，下一帧需要重解一次。
+    if (preview_mode) ik_dirty = true;
 }
 
 pmx::RenderSettings Viewer::flesh_render_settings() const {
@@ -459,6 +463,7 @@ void Viewer::reset_pose() {
     pose->reset();
     pose->solve_ik();
     pose->world();
+    ik_dirty = false;
     status = "已重置姿态";
 }
 
@@ -1540,6 +1545,8 @@ void Viewer::apply_motion_frame() {
         morph_dirty = true;
     }
     pose->invalidate_world();
+    // 新动作帧已经写入 base_rot，需要重新解 IK。
+    if (preview_mode) ik_dirty = true;
 }
 
 void Viewer::update_motion(float dt) {
@@ -2030,9 +2037,12 @@ static int run_viewer(const std::vector<std::string>& args) {
             // IK 与物理只在预览模式求值：编辑模式（PmxEditor 的 PmxView）只画模型
             // 原始姿态，姿态覆盖与物理回写都不会混进数据编辑视图。
             if (viewer.preview_mode) {
-                {
+                // 只在新姿态输入后解一次 IK。静止时每帧重解会在上一帧结果上继续
+                // 微调（CCD 未精确收敛 + 没有 VMD 重置 base_rot），膝盖会持续抖动。
+                if (viewer.ik_dirty) {
                     pmx::ProfileTimer ik_timer(pmx::ProfileScope::Ik);
                     viewer.pose->solve_ik();
+                    viewer.ik_dirty = false;
                 }
 #ifdef PMX_ENABLE_PHYSICS
                 if (viewer.physics_ptr && viewer.physics_ptr->enabled &&

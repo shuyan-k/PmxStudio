@@ -173,6 +173,7 @@ void Viewer::set_preview_mode(bool preview) {
         // 进入预览（PmxEditor 的 TransformView）：按当前动作帧重新落姿态，
         // 物理也以该帧为初始姿态复位，之后才允许播放动作 / 演算 / 摆姿。
         if (motion || timeline.clip) apply_motion_frame();
+        else ik_dirty = true;
         if (physics_enabled) reset_physics();
         status = "已切换到预览模式：可播放动作 / 演算物理 / 摆骨骼，模型数据只读";
     } else {
