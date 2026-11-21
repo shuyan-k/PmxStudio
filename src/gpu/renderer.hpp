@@ -222,6 +222,12 @@ private:
         // diffuse alpha 往往仍是 1，只看材质 alpha 会把它当不透明：低 alpha
         // 像素的黑色 RGB 被原样画出，表现为黑点、黑边。
         bool has_alpha = false;
+        // 按 UV 判断材质透明度用的 alpha 缩略图（128×128，值越大越不透明）。
+        // 整张贴图有透明像素不代表某个材质需要混合：图集边缘的抗锯齿、别的
+        // UV 岛上的镂空都会误导分类。
+        std::vector<unsigned char> alpha_grid;
+        int alpha_grid_w = 0;
+        int alpha_grid_h = 0;
     };
 
     // 材质扩展插件的每材质贴图（按漫反射贴图路径缓存）。
@@ -386,6 +392,11 @@ private:
     Texture& texture_from_path(const std::string& path);
     // 上传 RGBA8 像素并设置采样参数；scan_alpha 为 true 时统计透明覆盖。
     Texture make_texture(const unsigned char* pixels, int w, int h, bool scan_alpha);
+    // 材质实际覆盖的 UV 区域是否有显著比例落在贴图透明处。图集里少量抗锯齿
+    // 边缘不应让实体材质（尤其是脸）进入透明 pass——透明 pass 不写深度，
+    // 会把藏在脸后面的眼白、口腔等内层网格透出来。
+    bool range_uses_alpha(const Model& model, const MaterialRange& range,
+                          const Texture& tex) const;
     // 材质扩展插件：按漫反射贴图名配对 _normal / _orm / _metallic。
     MaterialExtTexture& material_ext_for(const Model& model, const Material& mt);
     // 缺少法线贴图时，从漫反射贴图生成一张（首次调用后缓存）。

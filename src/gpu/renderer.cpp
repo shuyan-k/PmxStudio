@@ -1738,8 +1738,33 @@ SceneRenderer::Texture SceneRenderer::make_texture(const unsigned char* pixels, 
         std::size_t transparent = 0;
         const std::size_t pixel_count =
             static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
-        for (std::size_t i = 0; i < pixel_count; ++i) {
-            if (pixels[i * 4 + 3] < 250) ++transparent;
+
+        // 同时生成 alpha 缩略图，供材质按自己实际使用的 UV 区域判断是否需要混合。
+        // 只看整张贴图会把「图集边缘有一点抗锯齿透明」的脸部材质误判成透明。
+        constexpr int kGrid = 128;
+        tex.alpha_grid_w = kGrid;
+        tex.alpha_grid_h = kGrid;
+        tex.alpha_grid.assign(static_cast<std::size_t>(kGrid) * kGrid, 255);
+        std::vector<std::uint32_t> alpha_sum(tex.alpha_grid.size(), 0);
+        std::vector<std::uint32_t> alpha_count(tex.alpha_grid.size(), 0);
+        std::vector<int> grid_x(static_cast<std::size_t>(w));
+        for (int x = 0; x < w; ++x)
+            grid_x[static_cast<std::size_t>(x)] = x * kGrid / w;
+        for (int y = 0; y < h; ++y) {
+            const int gy = y * kGrid / h;
+            const unsigned char* row = pixels + static_cast<std::size_t>(y) * w * 4;
+            for (int x = 0; x < w; ++x) {
+                const unsigned char a = row[x * 4 + 3];
+                if (a < 250) ++transparent;
+                const std::size_t gi = static_cast<std::size_t>(gy) * kGrid +
+                                       static_cast<std::size_t>(grid_x[static_cast<std::size_t>(x)]);
+                alpha_sum[gi] += a;
+                ++alpha_count[gi];
+            }
+        }
+        for (std::size_t i = 0; i < tex.alpha_grid.size(); ++i) {
+            if (alpha_count[i])
+                tex.alpha_grid[i] = static_cast<unsigned char>(alpha_sum[i] / alpha_count[i]);
         }
         tex.has_alpha = transparent * 100 > pixel_count;
     }
@@ -1769,6 +1794,38 @@ SceneRenderer::Texture SceneRenderer::make_texture(const unsigned char* pixels, 
     }
     tex.valid = true;
     return tex;
+}
+
+bool SceneRenderer::range_uses_alpha(const Model& model, const MaterialRange& range,
+                                     const Texture& tex) const {
+    if (!tex.has_alpha) return false;
+    if (tex.alpha_grid.empty() || tex.alpha_grid_w <= 0 || tex.alpha_grid_h <= 0 ||
+        range.count == 0)
+        return tex.has_alpha;
+    // 每个材质抽 256 个索引采样 UV：面数再多也只关心覆盖区域是否透明。
+    const std::size_t step = std::max<std::size_t>(1, range.count / 256);
+    int transparent = 0;
+    int total = 0;
+    for (std::size_t k = 0; k < range.count; k += step) {
+        const std::size_t ii = range.start + k;
+        if (ii >= model.indices.size()) break;
+        const std::uint32_t vi = model.indices[ii];
+        if (vi >= model.vertices.uv.size()) continue;
+        Vec2 uv = model.vertices.uv[vi];
+        uv.x -= std::floor(uv.x);
+        uv.y -= std::floor(uv.y);
+        const int x = std::min(tex.alpha_grid_w - 1,
+                               static_cast<int>(uv.x * static_cast<float>(tex.alpha_grid_w)));
+        const int y = std::min(tex.alpha_grid_h - 1,
+                               static_cast<int>(uv.y * static_cast<float>(tex.alpha_grid_h)));
+        const unsigned char a =
+            tex.alpha_grid[static_cast<std::size_t>(y) * static_cast<std::size_t>(tex.alpha_grid_w) +
+                           static_cast<std::size_t>(x)];
+        ++total;
+        if (a < 128) ++transparent;
+    }
+    // 少量抗锯齿边缘不触发混合；真正的镂空/半透明区域会贡献大量透明采样。
+    return total > 0 && transparent * 20 > total;
 }
 
 SceneRenderer::Texture& SceneRenderer::texture_from_path(const std::string& path) {
@@ -2318,10 +2375,14 @@ void SceneRenderer::render(const Model& model, Pose& pose, Physics* physics, con
             if (settings.preview_alpha && a < 0.001f) a = 1.0f;
             // 贴图自带 alpha 的材质（丝袜、蕾丝、发丝高光）必须混合：放进不透明
             // pass 会把低 alpha 像素的黑色 RGB 原样画出来，形成密集黑点/黑边。
+            // 但只有材质自己使用的 UV 区域确实落在透明处才算：图集边缘的抗锯齿
+            // 不能让脸、眼白、口腔这些实体材质失去深度写入，否则内层网格会透出。
             bool tex_alpha = false;
             if (mi >= 0) {
                 const Material& mt = model.materials[static_cast<std::size_t>(mi)];
-                if (mt.texture >= 0) tex_alpha = texture_for(model, mt.texture).has_alpha;
+                if (mt.texture >= 0)
+                    tex_alpha = range_uses_alpha(model, model_.ranges[r],
+                                                 texture_for(model, mt.texture));
             }
             if (a >= 0.999f && !tex_alpha) opaque.push_back(static_cast<int>(r));
             else alpha.push_back(static_cast<int>(r));
