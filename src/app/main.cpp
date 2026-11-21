@@ -1819,6 +1819,8 @@ static int run_viewer(const std::vector<std::string>& args) {
     // 描边依赖模板缓冲（与 Python 版相同的倒置壳遮罩算法）。
     glfwWindowHint(GLFW_STENCIL_BITS, 8);
 
+    // 主窗口先隐藏创建：启动期间只显示居中的小加载窗，加载完成后才显示主窗口。
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     GLFWwindow* window = glfwCreateWindow(1440, 900, "PmxStudio", nullptr, nullptr);
     if (!window) {
         report_error("无法创建 OpenGL 4.6 窗口");
@@ -1872,9 +1874,47 @@ static int run_viewer(const std::vector<std::string>& args) {
     g_owner = glfwGetWin32Window(window);  // 文件对话框的属主，保持模态
 #endif
 
+    // ---- 独立启动窗
+    // 只显示加载卡片本身：无边框、固定大小、居中，Windows 下不额外占用任务栏。
+    GLFWwindow* splash = nullptr;
+    {
+        const int sw = static_cast<int>(460.0f * pmxui::ui_scale());
+        const int sh = static_cast<int>(220.0f * pmxui::ui_scale());
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+        glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+        glfwWindowHint(GLFW_FLOATING, GLFW_TRUE);
+        // 与主窗口共享上下文：启动窗销毁前主窗口的 GL 资源不受影响。
+        splash = glfwCreateWindow(sw, sh, "PmxStudio", nullptr, window);
+        if (splash) {
+            if (GLFWmonitor* monitor = glfwGetPrimaryMonitor()) {
+                int mx = 0, my = 0, mw = 0, mh = 0;
+                glfwGetMonitorWorkarea(monitor, &mx, &my, &mw, &mh);
+                if (mw > 0 && mh > 0)
+                    glfwSetWindowPos(splash, mx + (mw - sw) / 2, my + (mh - sh) / 2);
+            }
+#ifdef _WIN32
+            HWND splash_hwnd = glfwGetWin32Window(splash);
+            LONG_PTR ex = GetWindowLongPtrW(splash_hwnd, GWL_EXSTYLE);
+            SetWindowLongPtrW(splash_hwnd, GWL_EXSTYLE,
+                              (ex | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW);
+            // Windows 11 圆角窗口；旧系统不支持时调用失败，忽略即可。
+            const int corner = 2;  // DWMWCP_ROUND
+            DwmSetWindowAttribute(splash_hwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */,
+                                  &corner, sizeof(corner));
+#endif
+        } else {
+            // 无法创建独立启动窗时退回主窗口内嵌卡片，至少不出现空白窗口。
+            glfwShowWindow(window);
+        }
+    }
+    glfwMakeContextCurrent(splash ? splash : window);
+    glfwSwapInterval(1);
+
     const char* missing = glapi::load();
     if (missing && *missing) {
         report_error(std::string("缺少 OpenGL 入口：") + missing);
+        if (splash) glfwDestroyWindow(splash);
         glfwDestroyWindow(window);
         glfwTerminate();
         return 1;
@@ -1933,39 +1973,59 @@ static int run_viewer(const std::vector<std::string>& args) {
             font_bytes.clear();
         }
     }
-    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplGlfw_InitForOpenGL(splash ? splash : window, true);
     ImGui_ImplOpenGL3_Init("#version 460");
 
     // ---- 启动画面
-    // 窗口在首帧之前就可见，而着色器编译、PMX 解析、物理构建、插件扫描都是同步的；
-    // 每个耗时阶段前先画一张居中加载卡片，避免用户长时间只看到空白窗口。
+    // 主窗口此时是隐藏的，只显示独立的小启动窗；着色器编译、PMX 解析、物理构建、
+    // 插件扫描都在它背后同步完成，结束后销毁启动窗并显示主窗口。
     const double splash_begin = glfwGetTime();
+    GLFWwindow* splash_target = splash ? splash : window;
+    bool splash_shown = false;
     auto present_splash = [&](const char* status, float progress) {
+        glfwMakeContextCurrent(splash_target);
+        if (splash && !splash_shown) {
+            // 第一帧即将绘制时才显示启动窗，避免它以空白系统底色先闪一下。
+            glfwShowWindow(splash);
+            splash_shown = true;
+        }
         glfwPollEvents();
         int sw = 0, sh = 0;
-        glfwGetFramebufferSize(window, &sw, &sh);
+        glfwGetFramebufferSize(splash_target, &sw, &sh);
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
         auto centered = [](const char* text) {
             const float w = ImGui::CalcTextSize(text).x;
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
-                                 (ImGui::GetContentRegionAvail().x - w) * 0.5f);
+            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - w) * 0.5f);
             ImGui::TextUnformatted(text);
         };
         const ImGuiViewport* vp = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-        ImGui::SetNextWindowSize(
-            ImVec2(pmxui::scale(460.0f), pmxui::scale(220.0f)), ImGuiCond_Always);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, pmxui::scale(12.0f));
+        ImVec2 card_pos = vp->Pos;
+        ImVec2 card_size = vp->Size;
+        if (splash) {
+            // 启动窗本身就等于卡片大小，窗口背景直接铺满整个 framebuffer。
+            ImGui::SetNextWindowPos(card_pos, ImGuiCond_Always);
+        } else {
+            // 独立启动窗创建失败时退回主窗口中央的圆角卡片。
+            card_size = ImVec2(pmxui::scale(460.0f), pmxui::scale(220.0f));
+            ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always,
+                                    ImVec2(0.5f, 0.5f));
+        }
+        ImGui::SetNextWindowSize(card_size, ImGuiCond_Always);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,
+                            splash ? 0.0f : pmxui::scale(12.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::Begin("##startup_splash", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
                          ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                          ImGuiWindowFlags_NoNav |
                          ImGuiWindowFlags_NoBringToFrontOnFocus);
-        ImGui::Dummy(ImVec2(0.0f, pmxui::scale(28.0f)));
+        // 内容块约 128 逻辑像素高，整体在卡片内垂直居中。
+        const float block_h = pmxui::scale(128.0f);
+        ImGui::SetCursorPosY(
+            std::max(pmxui::scale(12.0f), (card_size.y - block_h) * 0.5f));
         ImGui::PushStyleColor(ImGuiCol_Text, pmxtheme::accent());
         ImGui::PushFont(nullptr, 32.0f);
         centered("PmxStudio");
@@ -1974,13 +2034,12 @@ static int run_viewer(const std::vector<std::string>& args) {
         ImGui::PushFont(nullptr, 14.0f);
         centered("PMX 模型查看与出片工具  v" PMXSTUDIO_VERSION);
         ImGui::PopFont();
-        ImGui::Dummy(ImVec2(0.0f, pmxui::scale(22.0f)));
+        ImGui::Dummy(ImVec2(0.0f, pmxui::scale(24.0f)));
         centered(status);
-        ImGui::Dummy(ImVec2(0.0f, pmxui::scale(12.0f)));
+        ImGui::Dummy(ImVec2(0.0f, pmxui::scale(14.0f)));
         ImGui::ProgressBar(progress,
                            ImVec2(ImGui::GetContentRegionAvail().x, pmxui::scale(6.0f)),
                            "");
-        ImGui::Dummy(ImVec2(0.0f, pmxui::scale(10.0f)));
         ImGui::End();
         ImGui::PopStyleVar(2);
 
@@ -1989,16 +2048,22 @@ static int run_viewer(const std::vector<std::string>& args) {
         glClearColor(viewer.bg[0], viewer.bg[1], viewer.bg[2], 1.0f);
         glClear(glc::GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        glfwSwapBuffers(window);
+        glfwSwapBuffers(splash_target);
     };
 
     std::string err;
     present_splash("正在初始化渲染器…", 0.10f);
+    glfwMakeContextCurrent(window);
     if (!viewer.renderer.init(&err)) {
         report_error("渲染器初始化失败：" + err);
+        if (splash) glfwMakeContextCurrent(splash);
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
+        if (splash) {
+            glfwMakeContextCurrent(window);
+            glfwDestroyWindow(splash);
+        }
         glfwDestroyWindow(window);
         glfwTerminate();
         return 1;
@@ -2030,6 +2095,7 @@ static int run_viewer(const std::vector<std::string>& args) {
     if (!initial_arg.empty()) initial = initial_arg;
     if (initial.empty()) initial = "tests/test_model.pmx";
     present_splash("正在加载模型…", 0.35f);
+    glfwMakeContextCurrent(window);
     if (!viewer.load_model(initial, &err)) {
         viewer.model_path = initial;
         viewer.error = err;
@@ -2085,6 +2151,20 @@ static int run_viewer(const std::vector<std::string>& args) {
     while (glfwGetTime() - splash_begin < 0.4) {
         glfwWaitEventsTimeout(0.02);
         present_splash("正在准备界面…", 1.0f);
+    }
+
+    if (splash) {
+        // 启动窗的 ImGui 后台对象属于它自己的上下文：先在那里释放，再切回主窗口重建。
+        // 主窗口此时仍隐藏，等首帧真正画完（含贴图懒加载）后再显示并销毁启动窗，
+        // 避免中间露出一块还没绘制的黑/白窗口。
+        glfwMakeContextCurrent(splash);
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        glfwMakeContextCurrent(window);
+        ImGui_ImplGlfw_InitForOpenGL(window, true);
+        ImGui_ImplOpenGL3_Init("#version 460");
+    } else {
+        glfwShowWindow(window);
     }
 
     while (!glfwWindowShouldClose(window)) {
@@ -2209,6 +2289,14 @@ static int run_viewer(const std::vector<std::string>& args) {
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window);
+
+        if (splash) {
+            // 主窗口首帧已经画好，这时才销毁启动窗并显示主窗口，中间不会闪黑。
+            glfwDestroyWindow(splash);
+            splash = nullptr;
+            glfwShowWindow(window);
+            glfwFocusWindow(window);
+        }
 
         ++viewer.frames;
         const double now = glfwGetTime();
