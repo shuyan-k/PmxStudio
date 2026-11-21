@@ -29,6 +29,7 @@
 #include <cstring>
 #include <iterator>
 #include <memory>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -142,73 +143,100 @@ bool same_morph_weights(const pmx::MorphWeights& a, const pmx::MorphWeights& b) 
 
 
 bool Viewer::load_model(const std::string& path, std::string* err) {
+    pmx::Model loaded;
     try {
-        model = pmx::load_pmx(path);
+        loaded = pmx::load_pmx(path);
     } catch (const std::exception& e) {
         if (err) *err = e.what();
         return false;
     }
-    pose = std::make_unique<pmx::Pose>(model);
-    // 新模型的 IK 还没求过；预览模式下让主循环补解一次。
-    ik_dirty = true;
-    // 换模型后重建骨骼显示分类（手动覆盖随旧模型一起丢弃）。
-    refresh_bone_categories(true);
-    // 换模型后附件的锚点骨骼索引失效，直接清掉（含自带骨骼 / 物理运行时）。
-    accessory = pmx::Model{};
-    accessory_base = pmx::Model{};
-    accessory_pose.reset();
-    accessory_skin.reset();
-#ifdef PMX_ENABLE_PHYSICS
-    accessory_physics.reset();
-#endif
-    accessory_skin_pos.clear();
-    accessory_skin_nrm.clear();
-    accessory_reset = false;
-    accessory_physics_active = false;
-    render_model = pmx::Model{};
-    accessory_path.clear();
-    accessory_loaded = false;
-    accessory_bone = -1;
-    accessory_vertex_base = 0;
-    // 换主模型等同重开场景：额外导入的模型一并清空，避免旧场景残留。
-    clear_scene_models();
-    morph_values.assign(model.morphs.size(), 0.0f);
-    morph_weights.clear();
-    morph_dirty = true;
-    // 换模型后旧的 VMD 绑定失效，动作随之清空。
-    motion.reset();
-    motion_binding = pmx::VmdBinding{};
-    motion_frame = 0.0f;
-    motion_playing = false;
-    motion_dirty = false;
-    vmd_path.clear();
-    timeline_clear(*this);
-    clear_manual_pose();
-    select(SelKind::None, -1);
-    undo_stack.clear();
-    redo_stack.clear();
-    last_coalesce.clear();
-    dirty = false;
-    model_path = path;
 
-    if (!renderer.upload_model(model, err)) return false;
-    {
-        pmx::VertexMorphResult vm = pmx::apply_vertex_morphs(model, morph_weights);
-        renderer.update_base(model, vm);
-    }
-
-    // 相机动作是独立数据，换模型时保留；但相机视角属于视图状态，
-    // fit_camera 会重设自由视角，这里先退出相机视角，避免取景框残留。
-    camera_view = false;
-    fit_camera();  // 相机自动取景
+    // 解析成功后、上传新贴图之前先释放旧模型的 GPU 资源与物理世界：
+    // 共享内存核显（Intel Arc 等）上，旧贴图和新贴图同时驻留会让每次导入的
+    // 内存峰值多出一整份模型，反复导入时容易在第四五个模型上分配失败。
+    renderer.release_model();
+    pose.reset();
 #ifdef PMX_ENABLE_PHYSICS
     physics.release();
-    if (!physics.build(model)) status = "物理构建失败：" + physics.error;
-    physics_enabled = false;
-    physics.enabled = false;
 #endif
-    status = "已加载 " + path;
-    return true;
+    model = std::move(loaded);
+
+    try {
+        pose = std::make_unique<pmx::Pose>(model);
+        // 新模型的 IK 还没求过；预览模式下让主循环补解一次。
+        ik_dirty = true;
+        // 换模型后重建骨骼显示分类（手动覆盖随旧模型一起丢弃）。
+        refresh_bone_categories(true);
+        // 换模型后附件的锚点骨骼索引失效，直接清掉（含自带骨骼 / 物理运行时）。
+        accessory = pmx::Model{};
+        accessory_base = pmx::Model{};
+        accessory_pose.reset();
+        accessory_skin.reset();
+#ifdef PMX_ENABLE_PHYSICS
+        accessory_physics.reset();
+#endif
+        accessory_skin_pos.clear();
+        accessory_skin_nrm.clear();
+        accessory_reset = false;
+        accessory_physics_active = false;
+        render_model = pmx::Model{};
+        accessory_path.clear();
+        accessory_loaded = false;
+        accessory_bone = -1;
+        accessory_vertex_base = 0;
+        // 换主模型等同重开场景：额外导入的模型一并清空，避免旧场景残留。
+        clear_scene_models();
+        morph_values.assign(model.morphs.size(), 0.0f);
+        morph_weights.clear();
+        morph_dirty = true;
+        // 换模型后旧的 VMD 绑定失效，动作随之清空。
+        motion.reset();
+        motion_binding = pmx::VmdBinding{};
+        motion_frame = 0.0f;
+        motion_playing = false;
+        motion_dirty = false;
+        vmd_path.clear();
+        timeline_clear(*this);
+        clear_manual_pose();
+        select(SelKind::None, -1);
+        undo_stack.clear();
+        redo_stack.clear();
+        last_coalesce.clear();
+        dirty = false;
+        model_path = path;
+
+        if (!renderer.upload_model(model, err)) return false;
+        {
+            pmx::VertexMorphResult vm = pmx::apply_vertex_morphs(model, morph_weights);
+            renderer.update_base(model, vm);
+        }
+
+        // 相机动作是独立数据，换模型时保留；但相机视角属于视图状态，
+        // fit_camera 会重设自由视角，这里先退出相机视角，避免取景框残留。
+        camera_view = false;
+        fit_camera();  // 相机自动取景
+#ifdef PMX_ENABLE_PHYSICS
+        if (!physics.build(model)) status = "物理构建失败：" + physics.error;
+        physics_enabled = false;
+        physics.enabled = false;
+#endif
+        status = "已加载 " + path;
+        return true;
+    } catch (const std::bad_alloc&) {
+        // 贴图解码/上传阶段的内存不足不能冒到主循环：未捕获异常会直接
+        // terminate（用户看到的就是「导入时闪退」），这里转成界面错误。
+        renderer.release_model();
+        if (err) *err = "加载失败：内存不足（模型或贴图过大）";
+        return false;
+    } catch (const std::exception& e) {
+        renderer.release_model();
+        if (err) *err = std::string("加载失败：") + e.what();
+        return false;
+    } catch (...) {
+        renderer.release_model();
+        if (err) *err = "加载失败：未知错误";
+        return false;
+    }
 }
 
 void Viewer::apply_morphs() {

@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <new>
 #include <string>
 #include <unordered_set>
 
@@ -1134,6 +1135,12 @@ void SceneRenderer::release_model() {
     for (auto& [name, tex] : textures_)
         if (tex.id) glDeleteTextures(1, &tex.id);
     textures_.clear();
+    // 材质扩展缓存里的法线/ORM/金属度贴图都来自 textures_（上面已释放），
+    // 但自动生成的法线贴图只有这里持有，必须单独删除；否则每导入一个带新贴图
+    // 路径的模型就泄漏一整套全尺寸贴图，反复导入几次就会把共享内存核显吃满。
+    for (auto& [path, ext] : material_ext_)
+        if (ext.auto_normal.id) glDeleteTextures(1, &ext.auto_normal.id);
+    material_ext_.clear();
     texture_by_index_.clear();
     texture_index_ready_.clear();
     base_pos_.clear();
@@ -1889,15 +1896,25 @@ const SceneRenderer::Texture* SceneRenderer::auto_normal_for(const std::string& 
     ext.auto_tried = true;
     Texture& src = texture_from_path(diffuse);
     if (!src.valid || src.width < 3 || src.height < 3) return nullptr;
-    std::vector<unsigned char> pixels(
-        static_cast<std::size_t>(src.width) * static_cast<std::size_t>(src.height) * 4);
-    // 从已上传的漫反射贴图读回像素：朝向与 UV 完全一致，也省去再次解码文件。
-    glActiveTexture(glc::GL_TEXTURE0);
-    glBindTexture(glc::GL_TEXTURE_2D, src.id);
-    glPixelStorei(glc::GL_PACK_ALIGNMENT, 4);
-    glGetTexImage(glc::GL_TEXTURE_2D, 0, glc::GL_RGBA, glc::GL_UNSIGNED_BYTE, pixels.data());
-    const std::vector<unsigned char> normal =
-        generate_normal_map(pixels.data(), src.width, src.height);
+    std::vector<unsigned char> normal;
+    try {
+        {
+            std::vector<unsigned char> pixels(
+                static_cast<std::size_t>(src.width) * static_cast<std::size_t>(src.height) * 4);
+            // 从已上传的漫反射贴图读回像素：朝向与 UV 完全一致，也省去再次解码文件。
+            glActiveTexture(glc::GL_TEXTURE0);
+            glBindTexture(glc::GL_TEXTURE_2D, src.id);
+            glPixelStorei(glc::GL_PACK_ALIGNMENT, 4);
+            glGetTexImage(glc::GL_TEXTURE_2D, 0, glc::GL_RGBA, glc::GL_UNSIGNED_BYTE,
+                          pixels.data());
+            // 读回缓冲在生成后立刻释放，上传新贴图时只保留法线数据一份，降低峰值。
+            normal = generate_normal_map(pixels.data(), src.width, src.height);
+        }
+    } catch (const std::bad_alloc&) {
+        // 大贴图（4K/8K）在内存紧张时可能分配失败。这里处于渲染循环中，
+        // 异常冒出去会直接 terminate（表现为导入模型后闪退），改为本次跳过自动法线。
+        return nullptr;
+    }
     ext.auto_normal = make_texture(normal.data(), src.width, src.height, false);
     // make_texture 会绑定新纹理，恢复漫反射，避免破坏 unit 0 上的 uTex。
     glActiveTexture(glc::GL_TEXTURE0);
