@@ -1905,9 +1905,12 @@ void SceneRenderer::bind_material(const Model& model, const Material& mt,
         mesh_program_.set1i(sampler, unit);
         mesh_program_.set1i(use, tex && tex->valid ? 1 : 0);
     };
-    bind_ext(3, normal_tex, "uNormalTex", "uUseNormalMap");
-    bind_ext(4, ext ? &ext->orm : nullptr, "uOrmTex", "uUseOrm");
-    bind_ext(5, ext ? &ext->metallic : nullptr, "uMetallicTex", "uUseMetallic");
+    // 纹理单元 1/2/3 已分别用于球面贴图、toon ramp 和阴影贴图，
+    // 材质扩展必须避开，否则会把阴影贴图顶掉——表现为法线贴图开启后
+    // 模型上出现跟随贴图纹理的大片假阴影。
+    bind_ext(6, normal_tex, "uNormalTex", "uUseNormalMap");
+    bind_ext(7, ext ? &ext->orm : nullptr, "uOrmTex", "uUseOrm");
+    bind_ext(8, ext ? &ext->metallic : nullptr, "uMetallicTex", "uUseMetallic");
     mesh_program_.set1f("uNormalStrength", std::clamp(settings.normal_strength, 0.0f, 2.0f));
     glActiveTexture(glc::GL_TEXTURE0);
 }

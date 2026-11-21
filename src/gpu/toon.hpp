@@ -115,9 +115,12 @@ void main() {
     vec4 tex = uUseTex == 1 ? texture(uTex, vUV) : vec4(1.0);
     if (tex.a < 0.02) discard;
     vec4 base = vec4(tex.rgb * uDiffuse.rgb * uModelBrightness, tex.a * uDiffuse.a);
-    vec3 n = normalize(vN);
-    if (!gl_FrontFacing) n = -n;
-    n = material_ext_normal(n);
+    vec3 ng = normalize(vN);
+    if (!gl_FrontFacing) ng = -ng;
+    // 阴影查找必须用几何法线：法线贴图只应改变明暗，不能改变可见/遮蔽关系。
+    // 用扰动后的法线做 normal-offset 会把采样点移进相邻表面的深度里，在斜面
+    // （腿、衣袖）上产生大片跟随贴图纹理的自阴影伪影。
+    vec3 n = material_ext_normal(ng);
     // 金属度 / 粗糙度：仅在 ORM 或金属度贴图存在时改变着色。
     bool use_pbr = uUseOrm == 1 || uUseMetallic == 1;
     float metallic = 0.0;
@@ -156,7 +159,8 @@ void main() {
         shade = mix(lambert, toon, uToon);
     }
     // 阴影只调制直射光：暗部仍保留环境色，避免阴影里变成纯黑。
-    float shadow = mix(1.0, shadow_visibility(vWorld, n, ndl_c), uShadowStrength);
+    float ndl_geom = max(dot(ng, light), 0.0);
+    float shadow = mix(1.0, shadow_visibility(vWorld, ng, ndl_geom), uShadowStrength);
     shade *= shadow;
     // 照明色 × 强度作用在直射光上；环境色乘在暗部（MMD 的「環境色」）。
     // 环境色必须先乘一个固定强度：若直接 mix(ambient, 1, shade)，当环境色为
