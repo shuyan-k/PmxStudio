@@ -259,6 +259,8 @@ private:
     std::vector<std::uint8_t> texture_index_ready_;
     // 材质扩展插件：漫反射贴图路径 -> 配对到的法线 / ORM / 金属度贴图。
     std::unordered_map<std::string, MaterialExtTexture> material_ext_;
+    // 自动法线贴图累计占用的显存（估算），用于给大模型设上限，避免核显显存耗尽。
+    std::size_t auto_normal_bytes_ = 0;
 
     OverlayMesh bone_mesh_;       // 每帧重建：八面体（顶点色）
     OverlayMesh camera_mesh_;     // 每帧重建：场景相机线框（pos3 + color4）

@@ -73,6 +73,13 @@ void SkinDeformer::deform_one(const std::vector<Vec3>& base_pos,
                               const std::vector<Mat4>& world, int vi, Vec3& pos,
                               Vec3& nrm) const {
     const std::size_t k = static_cast<std::size_t>(vi);
+    // 未使用的骨骼槽位在部分 PMX 中写作 -1 或越界值，直接索引 world 会越界。
+    const auto clamp_bone = [this](int bone) {
+        if (bone_count <= 0) return 0;
+        if (bone < 0) return 0;
+        if (bone >= bone_count) return bone_count - 1;
+        return bone;
+    };
     const int wt = types[k];
     const int influence = wt == 0 ? 1 : ((wt == 1 || wt == 3) ? 2 : 4);
     const Vec3 p0 = base_pos[k];
@@ -146,7 +153,7 @@ void SkinDeformer::deform_one(const std::vector<Vec3>& base_pos,
         for (int slot = 0; slot < influence; ++slot) {
             const float w = weights[k][static_cast<std::size_t>(slot)];
             if (w <= 0.0f) continue;
-            const int bone = bones[k][static_cast<std::size_t>(slot)];
+            const int bone = clamp_bone(bones[k][static_cast<std::size_t>(slot)]);
             const Mat4& M = world[static_cast<std::size_t>(bone)];
             Quat q = quat_from_mat(upper3(M));
             Vec3 t(M.at(0, 3), M.at(1, 3), M.at(2, 3));
@@ -180,7 +187,7 @@ void SkinDeformer::deform_one(const std::vector<Vec3>& base_pos,
     }
 
     for (int slot = 0; slot < influence; ++slot) {
-        const int bone = bones[k][static_cast<std::size_t>(slot)];
+        const int bone = clamp_bone(bones[k][static_cast<std::size_t>(slot)]);
         const float w = weights[k][static_cast<std::size_t>(slot)];
         const Mat4& M = world[static_cast<std::size_t>(bone)];
         if (!resolved) {
@@ -199,6 +206,14 @@ void SkinDeformer::deform_one(const std::vector<Vec3>& base_pos,
 void SkinDeformer::deform(const std::vector<Vec3>& base_pos, const std::vector<Vec3>& base_nrm,
                           const std::vector<Mat4>& world, std::vector<Vec3>& out_pos,
                           std::vector<Vec3>& out_nrm) const {
+    if (world.empty()) {
+        // 没有骨骼可绑定：直接沿用静止顶点，避免 clamp_bone 产生负索引。
+        out_pos.assign(base_pos.begin(), base_pos.begin() + std::min<std::size_t>(n, base_pos.size()));
+        out_nrm.assign(base_nrm.begin(), base_nrm.begin() + std::min<std::size_t>(n, base_nrm.size()));
+        out_pos.resize(static_cast<std::size_t>(n));
+        out_nrm.resize(static_cast<std::size_t>(n));
+        return;
+    }
     out_pos.resize(static_cast<std::size_t>(n));
     out_nrm.resize(static_cast<std::size_t>(n));
     for (int i = 0; i < n; ++i) deform_one(base_pos, base_nrm, world, i, out_pos[static_cast<std::size_t>(i)],
@@ -210,6 +225,10 @@ void SkinDeformer::deform_subset(const std::vector<Vec3>& base_pos,
                                  const std::vector<Mat4>& world,
                                  const std::vector<int>& dirty_bones, std::vector<Vec3>& prev_pos,
                                  std::vector<Vec3>& prev_nrm) const {
+    if (world.empty()) {
+        deform(base_pos, base_nrm, world, prev_pos, prev_nrm);
+        return;
+    }
     if (static_cast<int>(prev_pos.size()) != n || static_cast<int>(prev_nrm.size()) != n ||
         dirty_bones.size() > bone_vertices_.size() * 3 / 10) {
         deform(base_pos, base_nrm, world, prev_pos, prev_nrm);

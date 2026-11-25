@@ -23,6 +23,11 @@ namespace {
 
 constexpr int kFloatsPerVertex = 32;  // 8 vec4
 
+// 自动法线只是材质扩展的近似效果：超过 1024 的漫反射会先降采样再生成，
+// 避免 4K 贴图在核显上把显存翻倍；累计占用再设 256MB 上限兜底。
+constexpr int kAutoNormalMaxDim = 1024;
+constexpr std::size_t kAutoNormalBudget = 256ull << 20;
+
 // 刚体按组着色，与 Python 版 theme.py 的 GROUP_COLORS 完全一致。
 const Vec3 kGroupColors[16] = {
     {0.937f, 0.420f, 0.420f}, {0.941f, 0.702f, 0.357f}, {0.910f, 0.831f, 0.353f},
@@ -1145,6 +1150,7 @@ void SceneRenderer::release_model() {
     for (auto& [path, ext] : material_ext_)
         if (ext.auto_normal.id) glDeleteTextures(1, &ext.auto_normal.id);
     material_ext_.clear();
+    auto_normal_bytes_ = 0;
     texture_by_index_.clear();
     texture_index_ready_.clear();
     base_pos_.clear();
@@ -1182,6 +1188,10 @@ bool SceneRenderer::upload_model(const Model& model, std::string* error) try {
     for (const Vec3& p : model.vertices.pos) radius = std::max(radius, length(p - scene_center_));
     scene_radius_ = std::max(radius, 1.0f);
     std::vector<float> data(static_cast<std::size_t>(nv) * kFloatsPerVertex, 0.0f);
+    // 部分 PMX 会把未使用的骨骼槽位写成 -1 或超出骨骼数；蒙皮着色器用它直接读
+    // 骨骼矩阵 SSBO，越界读取在部分驱动（如 Intel）上会导致设备错误直至闪退，
+    // 因此上传前统一钳制到有效范围。
+    const int bone_limit = static_cast<int>(model.bones.size()) - 1;
     for (int i = 0; i < nv; ++i) {
         const std::size_t o = static_cast<std::size_t>(i) * kFloatsPerVertex;
         const std::size_t k = static_cast<std::size_t>(i);
@@ -1195,8 +1205,11 @@ bool SceneRenderer::upload_model(const Model& model, std::string* error) try {
         data[o + 9] = model.vertices.uv[k].y;
         data[o + 10] = model.vertices.edge[k];
         data[o + 11] = static_cast<float>(model.vertices.wtype[k]);
-        for (int c = 0; c < 4; ++c)
-            data[o + 12 + c] = static_cast<float>(model.vertices.bones[k][static_cast<std::size_t>(c)]);
+        for (int c = 0; c < 4; ++c) {
+            int bone = model.vertices.bones[k][static_cast<std::size_t>(c)];
+            if (bone_limit < 0 || bone < 0 || bone > bone_limit) bone = 0;
+            data[o + 12 + c] = static_cast<float>(bone);
+        }
         for (int c = 0; c < 4; ++c)
             data[o + 16 + c] = model.vertices.weights[k][static_cast<std::size_t>(c)];
         const auto& sd = model.vertices.sdef[k];
@@ -1220,11 +1233,25 @@ bool SceneRenderer::upload_model(const Model& model, std::string* error) try {
                  data.data(), glc::GL_DYNAMIC_DRAW);
     glBindBuffer(glc::GL_SHADER_STORAGE_BUFFER, model_.vbo);
 
+    // 索引超出顶点数时，gl_VertexID 会越界读顶点 SSBO，与骨骼索引同样有驱动
+    // 崩溃风险；仅在确有非法值时复制并修正，正常模型不多占内存。
+    const std::uint32_t index_limit = static_cast<std::uint32_t>(nv - 1);
+    const std::uint32_t* index_data = model.indices.data();
+    std::vector<std::uint32_t> fixed_indices;
+    const bool bad_index = std::any_of(
+        model.indices.begin(), model.indices.end(),
+        [index_limit](std::uint32_t v) { return v > index_limit; });
+    if (bad_index) {
+        fixed_indices = model.indices;
+        for (std::uint32_t& v : fixed_indices)
+            if (v > index_limit) v = 0;
+        index_data = fixed_indices.data();
+    }
     glGenBuffers(1, &model_.ebo);
     glBindBuffer(glc::GL_ELEMENT_ARRAY_BUFFER, model_.ebo);
     glBufferData(glc::GL_ELEMENT_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(model.indices.size() * sizeof(std::uint32_t)),
-                 model.indices.data(), glc::GL_STATIC_DRAW);
+                 index_data, glc::GL_STATIC_DRAW);
 
     glBindBuffer(glc::GL_ELEMENT_ARRAY_BUFFER, model_.ebo);
 
@@ -1911,9 +1938,12 @@ const SceneRenderer::Texture* SceneRenderer::auto_normal_for(const std::string& 
                                                              MaterialExtTexture& ext) {
     if (ext.auto_tried) return ext.auto_normal.valid ? &ext.auto_normal : nullptr;
     ext.auto_tried = true;
+    if (auto_normal_bytes_ >= kAutoNormalBudget) return nullptr;
     Texture& src = texture_from_path(diffuse);
     if (!src.valid || src.width < 3 || src.height < 3) return nullptr;
     std::vector<unsigned char> normal;
+    int nw = src.width;
+    int nh = src.height;
     try {
         {
             std::vector<unsigned char> pixels(
@@ -1924,15 +1954,40 @@ const SceneRenderer::Texture* SceneRenderer::auto_normal_for(const std::string& 
             glPixelStorei(glc::GL_PACK_ALIGNMENT, 4);
             glGetTexImage(glc::GL_TEXTURE_2D, 0, glc::GL_RGBA, glc::GL_UNSIGNED_BYTE,
                           pixels.data());
+            if (nw > kAutoNormalMaxDim || nh > kAutoNormalMaxDim) {
+                // 4K/8K 漫反射降到 1024 再生成：自动法线本身是近似效果，降采样
+                // 几乎看不出差异，但显存与生成时的 CPU 峰值会小一个数量级。
+                const int longest = std::max(nw, nh);
+                nw = std::max(3, nw * kAutoNormalMaxDim / longest);
+                nh = std::max(3, nh * kAutoNormalMaxDim / longest);
+                std::vector<unsigned char> small(
+                    static_cast<std::size_t>(nw) * static_cast<std::size_t>(nh) * 4);
+                for (int y = 0; y < nh; ++y) {
+                    const int sy = std::min(src.height - 1, y * src.height / nh);
+                    for (int x = 0; x < nw; ++x) {
+                        const int sx = std::min(src.width - 1, x * src.width / nw);
+                        std::memcpy(&small[(static_cast<std::size_t>(y) * nw + x) * 4],
+                                    &pixels[(static_cast<std::size_t>(sy) * src.width + sx) * 4],
+                                    4);
+                    }
+                }
+                normal = generate_normal_map(small.data(), nw, nh);
+            } else {
+                normal = generate_normal_map(pixels.data(), src.width, src.height);
+            }
             // 读回缓冲在生成后立刻释放，上传新贴图时只保留法线数据一份，降低峰值。
-            normal = generate_normal_map(pixels.data(), src.width, src.height);
         }
     } catch (const std::bad_alloc&) {
         // 大贴图（4K/8K）在内存紧张时可能分配失败。这里处于渲染循环中，
         // 异常冒出去会直接 terminate（表现为导入模型后闪退），改为本次跳过自动法线。
         return nullptr;
     }
-    ext.auto_normal = make_texture(normal.data(), src.width, src.height, false);
+    if (normal.empty()) return nullptr;
+    // 含 mipmap 的粗略占用；超过总量上限时后续材质不再生成，保证核显显存可控。
+    const std::size_t bytes = static_cast<std::size_t>(nw) * static_cast<std::size_t>(nh) * 4 * 4 / 3;
+    if (auto_normal_bytes_ + bytes > kAutoNormalBudget) return nullptr;
+    ext.auto_normal = make_texture(normal.data(), nw, nh, false);
+    if (ext.auto_normal.valid) auto_normal_bytes_ += bytes;
     // make_texture 会绑定新纹理，恢复漫反射，避免破坏 unit 0 上的 uTex。
     glActiveTexture(glc::GL_TEXTURE0);
     glBindTexture(glc::GL_TEXTURE_2D, src.id);

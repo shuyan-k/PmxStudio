@@ -383,6 +383,24 @@ void test_skinning(const pmx::Model& model) {
         deform.deform_subset(model.vertices.pos, model.vertices.nrm, w1, dirty, sub_pos, sub_nrm);
         check_near(max_abs_diff(sub_pos, out_pos), 0.0, 2e-4, "局部重算与全量重算一致");
     }
+
+    // 导出器常把未使用的骨骼槽位写成 -1 或越界值；CPU 蒙皮必须钳制而不是越界读。
+    if (!model.bones.empty() && !model.vertices.bones.empty()) {
+        pmx::Model bad = model;
+        for (auto& b : bad.vertices.bones) {
+            b[0] = -1;
+            b[1] = static_cast<int>(bad.bones.size()) + 7;
+            b[2] = -3;
+            b[3] = 999999;
+        }
+        pmx::SkinDeformer bad_deform(bad);
+        std::vector<pmx::Vec3> bad_pos, bad_nrm;
+        bad_deform.deform(bad.vertices.pos, bad.vertices.nrm, pose.world(), bad_pos, bad_nrm);
+        bool clamp_ok = bad_pos.size() == bad.vertices.size();
+        for (const pmx::Vec3& p : bad_pos)
+            clamp_ok &= std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z);
+        check(clamp_ok, "非法骨骼索引被钳制，不越界");
+    }
 }
 
 // ---------------------------------------------------------------- 物理
