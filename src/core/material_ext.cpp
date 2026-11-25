@@ -22,7 +22,9 @@ void append_candidates(std::vector<std::string>& out, const std::filesystem::pat
                        const std::string& stem, const char* const (&suffixes)[N]) {
     for (const char* suffix : suffixes) {
         for (const char* ext : kImageExts) {
-            out.push_back(utf8_string(dir / (stem + suffix + ext)));
+            // 文件名必须先转成宽/原生路径再拼接：直接用 std::string 与 path 做 / 运算
+            // 在 Windows 上会按 ANSI 代码页转换，非本机代码页的日文名会抛异常。
+            out.push_back(utf8_string(dir / utf8_path(stem + suffix + ext)));
         }
     }
 }

@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <iterator>
 #include <new>
 #include <string>
@@ -1895,10 +1896,11 @@ SceneRenderer::Texture& SceneRenderer::texture_from_path(const std::string& path
         Texture tex = make_texture(pixels, w, h, true);
         if (pixels) stbi_image_free(pixels);
         return textures_.emplace(path, tex).first->second;
-    } catch (const std::bad_alloc&) {
-        // 贴图在首帧绘制时才解码，这里位于渲染循环内：内存不足时按无贴图处理，
-        // 下一帧会重试，但不会让异常冒出去终止进程。
-        return missing;
+    } catch (const std::exception&) {
+        // 贴图在首帧绘制时才解码，这里位于渲染循环内：内存不足、路径编码异常
+        // 或文件系统错误都按无贴图处理，不能让异常冒出去终止进程。
+        // 记入缓存，避免每帧重复解码/抛异常。
+        return textures_.emplace(path, Texture{}).first->second;
     }
 }
 
@@ -1922,16 +1924,21 @@ SceneRenderer::MaterialExtTexture& SceneRenderer::material_ext_for(const Model& 
                                                                   const Material& mt) {
     static MaterialExtTexture missing;
     if (mt.texture < 0) return missing;
-    const std::string diffuse = model.resolve_texture(mt.texture);
-    if (diffuse.empty()) return missing;
-    auto it = material_ext_.find(diffuse);
-    if (it != material_ext_.end()) return it->second;
-    const MaterialExtFiles files = find_material_ext(diffuse);
-    MaterialExtTexture ext;
-    ext.normal = texture_from_path(files.normal);
-    ext.orm = texture_from_path(files.orm);
-    ext.metallic = texture_from_path(files.metallic);
-    return material_ext_.emplace(diffuse, ext).first->second;
+    try {
+        const std::string diffuse = model.resolve_texture(mt.texture);
+        if (diffuse.empty()) return missing;
+        auto it = material_ext_.find(diffuse);
+        if (it != material_ext_.end()) return it->second;
+        const MaterialExtFiles files = find_material_ext(diffuse);
+        MaterialExtTexture ext;
+        ext.normal = texture_from_path(files.normal);
+        ext.orm = texture_from_path(files.orm);
+        ext.metallic = texture_from_path(files.metallic);
+        return material_ext_.emplace(diffuse, ext).first->second;
+    } catch (const std::exception&) {
+        // 贴图路径解析失败时按“没有扩展贴图”处理，不能让异常进入渲染循环。
+        return missing;
+    }
 }
 
 const SceneRenderer::Texture* SceneRenderer::auto_normal_for(const std::string& diffuse,
@@ -1986,7 +1993,11 @@ const SceneRenderer::Texture* SceneRenderer::auto_normal_for(const std::string& 
     // 含 mipmap 的粗略占用；超过总量上限时后续材质不再生成，保证核显显存可控。
     const std::size_t bytes = static_cast<std::size_t>(nw) * static_cast<std::size_t>(nh) * 4 * 4 / 3;
     if (auto_normal_bytes_ + bytes > kAutoNormalBudget) return nullptr;
-    ext.auto_normal = make_texture(normal.data(), nw, nh, false);
+    try {
+        ext.auto_normal = make_texture(normal.data(), nw, nh, false);
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
     if (ext.auto_normal.valid) auto_normal_bytes_ += bytes;
     // make_texture 会绑定新纹理，恢复漫反射，避免破坏 unit 0 上的 uTex。
     glActiveTexture(glc::GL_TEXTURE0);

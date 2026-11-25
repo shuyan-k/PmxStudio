@@ -301,6 +301,15 @@ void test_material_ext_candidates() {
     check(pmx::material_ext_candidates("/m/tex/body").normal.front() ==
               pmx::utf8_string(pmx::utf8_path("/m/tex") / "body_normal.png"),
           "无扩展名的漫反射贴图也能派生");
+    // Windows 上 path 与窄字符串拼接会按 ANSI 代码页转换，非本机代码页的
+    // 日文贴图名可能抛 filesystem_error；候选必须按 UTF-8 -> 宽字符路径拼接。
+    const pmx::MaterialExtCandidates unicode =
+        pmx::material_ext_candidates("/model/モデル/テクスチャ.png");
+    check(!unicode.normal.empty() &&
+              unicode.normal.front() ==
+                  pmx::utf8_string(pmx::utf8_path("/model/モデル") /
+                                   pmx::utf8_path("テクスチャ_normal.png")),
+          "非 ASCII 贴图名也能派生候选");
 }
 
 void test_generate_normal_map() {

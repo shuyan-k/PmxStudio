@@ -27,6 +27,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <iterator>
 #include <memory>
 #include <new>
@@ -131,6 +132,31 @@ std::string pick_save_file(const wchar_t*, const wchar_t*, const std::string&,
 
 
 namespace {
+
+// 兜底日志：Windows 下 GUI 子系统没有控制台，异常信息只能写文件。
+// 用 C 的 fopen/fputs，避免在 bad_alloc 或退出路径上再次分配内存。
+void append_crash_log(const char* text) {
+    std::FILE* f = std::fopen("pmxstudio_crash.log", "a");
+    if (!f) return;
+    std::fputs(text ? text : "", f);
+    std::fputc('\n', f);
+    std::fclose(f);
+}
+
+void on_terminate() {
+    if (std::exception_ptr ep = std::current_exception()) {
+        try {
+            std::rethrow_exception(ep);
+        } catch (const std::exception& e) {
+            append_crash_log((std::string("terminate: ") + e.what()).c_str());
+        } catch (...) {
+            append_crash_log("terminate: 未知异常");
+        }
+    } else {
+        append_crash_log("terminate: 没有活动异常");
+    }
+    std::abort();
+}
 
 // 形态权重逐项比较：播放时只有权重变化才重建顶点形态与渲染基底。
 bool same_morph_weights(const pmx::MorphWeights& a, const pmx::MorphWeights& b) {
@@ -1840,6 +1866,8 @@ static void report_error(const std::string& message) {
 // args 已在入口处由 pmx::utf8_args 转成 UTF-8：Windows 的 CRT argv 按 ANSI 代码页解码，
 // 中文/日文路径会变成乱码，所以不直接用 argv。
 static int run_viewer(const std::vector<std::string>& args) {
+    // 任何漏网的 C++ 异常都先写日志再结束进程，方便定位 Windows 上的 0xC0000409。
+    std::set_terminate(on_terminate);
     if (!glfwInit()) {
         report_error("GLFW 初始化失败");
         return 1;
@@ -2264,45 +2292,63 @@ static int run_viewer(const std::vector<std::string>& args) {
             }
         }
 
-        if (viewer.pose) {
-            if (viewer.morph_dirty) viewer.apply_morphs();
-            else viewer.pose->apply(&viewer.morph_weights);
-            // IK 与物理只在预览模式求值：编辑模式（PmxEditor 的 PmxView）只画模型
-            // 原始姿态，姿态覆盖与物理回写都不会混进数据编辑视图。
-            if (viewer.preview_mode) {
-                // 只在新姿态输入后解一次 IK。静止时每帧重解会在上一帧结果上继续
-                // 微调（CCD 未精确收敛 + 没有 VMD 重置 base_rot），膝盖会持续抖动。
-                if (viewer.ik_dirty) {
-                    pmx::ProfileTimer ik_timer(pmx::ProfileScope::Ik);
-                    viewer.pose->solve_ik();
-                    viewer.ik_dirty = false;
-                }
+        try {
+            if (viewer.pose) {
+                if (viewer.morph_dirty) viewer.apply_morphs();
+                else viewer.pose->apply(&viewer.morph_weights);
+                // IK 与物理只在预览模式求值：编辑模式（PmxEditor 的 PmxView）只画模型
+                // 原始姿态，姿态覆盖与物理回写都不会混进数据编辑视图。
+                if (viewer.preview_mode) {
+                    // 只在新姿态输入后解一次 IK。静止时每帧重解会在上一帧结果上继续
+                    // 微调（CCD 未精确收敛 + 没有 VMD 重置 base_rot），膝盖会持续抖动。
+                    if (viewer.ik_dirty) {
+                        pmx::ProfileTimer ik_timer(pmx::ProfileScope::Ik);
+                        viewer.pose->solve_ik();
+                        viewer.ik_dirty = false;
+                    }
 #ifdef PMX_ENABLE_PHYSICS
-                if (viewer.physics_ptr && viewer.physics_ptr->enabled &&
-                    !viewer.export_job.active) {
-                    pmx::ProfileTimer physics_timer(pmx::ProfileScope::Physics);
-                    // 手动拖骨骼时只跑一个子步，让反馈跟手而不是追帧。
-                    const bool dragging = viewer.drag_mode == Viewer::DRAG_MOVE ||
-                                          viewer.drag_mode == Viewer::DRAG_ROTATE;
-                    viewer.physics_ptr->set_max_substeps(dragging ? 1 : 10);
-                    if (physics_seek) viewer.physics_ptr->reset_accumulator();
-                    viewer.physics_ptr->advance(*viewer.pose, physics_dt,
-                                                &viewer.morph_weights);
-                }
+                    if (viewer.physics_ptr && viewer.physics_ptr->enabled &&
+                        !viewer.export_job.active) {
+                        pmx::ProfileTimer physics_timer(pmx::ProfileScope::Physics);
+                        // 手动拖骨骼时只跑一个子步，让反馈跟手而不是追帧。
+                        const bool dragging = viewer.drag_mode == Viewer::DRAG_MOVE ||
+                                              viewer.drag_mode == Viewer::DRAG_ROTATE;
+                        viewer.physics_ptr->set_max_substeps(dragging ? 1 : 10);
+                        if (physics_seek) viewer.physics_ptr->reset_accumulator();
+                        viewer.physics_ptr->advance(*viewer.pose, physics_dt,
+                                                    &viewer.morph_weights);
+                    }
 #endif
+                }
+                viewer.pose->world();
+                // 附件自带骨骼/物理在主姿态之后求值，并把蒙皮结果写回附件段顶点。
+                // 与主物理一致：跳帧时仍按当前帧间隔推进，只是不追之前的累积时间。
+                if (!viewer.export_job.active)
+                    viewer.update_accessory_frame(physics_dt);
             }
-            viewer.pose->world();
-            // 附件自带骨骼/物理在主姿态之后求值，并把蒙皮结果写回附件段顶点。
-            // 与主物理一致：跳帧时仍按当前帧间隔推进，只是不追之前的累积时间。
-            if (!viewer.export_job.active)
-                viewer.update_accessory_frame(physics_dt);
-        }
-        // 多模型场景：额外模型各自求值（静止姿态 + 物理）；导出时由导出循环推进。
-        if (!viewer.export_job.active) viewer.update_scene_models(physics_dt);
+            // 多模型场景：额外模型各自求值（静止姿态 + 物理）；导出时由导出循环推进。
+            if (!viewer.export_job.active) viewer.update_scene_models(physics_dt);
 
-        {
-            pmx::ProfileTimer skin_timer(pmx::ProfileScope::Skin);
-            viewer.draw_scene(fb_w, fb_h);
+            {
+                pmx::ProfileTimer skin_timer(pmx::ProfileScope::Skin);
+                viewer.draw_scene(fb_w, fb_h);
+            }
+        } catch (const std::exception& e) {
+            // 渲染/物理异常不能冒出主循环：Windows 静态 CRT 下未捕获异常会以
+            // 0xC0000409 直接终止进程（用户看到的就是「加载后闪退」）。
+            // 这里记录原因并释放模型，避免每帧重复抛异常，界面仍可操作。
+            append_crash_log("render 异常：");
+            append_crash_log(e.what());
+            viewer.status = std::string("渲染失败：") + e.what();
+            viewer.renderer.release_model();
+            viewer.pose.reset();
+            viewer.clear_scene_models();
+        } catch (...) {
+            append_crash_log("render 异常：未知类型");
+            viewer.status = "渲染失败：未知异常";
+            viewer.renderer.release_model();
+            viewer.pose.reset();
+            viewer.clear_scene_models();
         }
         {
             pmx::ProfileTimer ui_timer(pmx::ProfileScope::Ui);

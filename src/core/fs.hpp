@@ -12,7 +12,20 @@
 namespace pmx {
 
 inline std::filesystem::path utf8_path(const std::string& utf8) {
-#if defined(__cpp_lib_char8_t)
+#if defined(_WIN32) && defined(__cpp_lib_char8_t)
+    try {
+        return std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
+    } catch (const std::filesystem::filesystem_error&) {
+        // 个别 PMX 的贴图名不是合法 UTF-8（或含孤立代理项），Windows 上
+        // path 构造会抛 filesystem_error；异常冒进渲染循环会直接 terminate。
+        // 这里退化为只保留 ASCII 字节，至少不会崩溃（该贴图会按缺失处理）。
+        std::string ascii;
+        ascii.reserve(utf8.size());
+        for (unsigned char c : utf8)
+            if (c < 0x80) ascii.push_back(static_cast<char>(c));
+        return std::filesystem::path(std::u8string(ascii.begin(), ascii.end()));
+    }
+#elif defined(__cpp_lib_char8_t)
     return std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
 #else
     return std::filesystem::u8path(utf8);
