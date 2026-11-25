@@ -150,7 +150,9 @@ void PluginManager::set_host_invoke(HostInvoke invoke) { host_invoke_ = std::mov
 
 std::vector<std::string> PluginManager::search_paths() const {
     std::vector<std::filesystem::path> dirs;
-    dirs.emplace_back(std::filesystem::path(executable_dir()) / "plugins");
+    // executable_dir() 是 UTF-8；直接构造 path 会按 Windows ANSI 代码页转换，
+    // 安装在中文/日文目录时会抛 filesystem_error。
+    dirs.emplace_back(pmx::utf8_path(executable_dir()) / "plugins");
     std::error_code ec;
     const auto cwd = std::filesystem::current_path(ec);
     if (!ec) dirs.emplace_back(cwd / "plugins");
