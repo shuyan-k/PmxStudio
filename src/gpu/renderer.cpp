@@ -1781,6 +1781,7 @@ SceneRenderer::Texture SceneRenderer::make_texture(const unsigned char* pixels, 
         // 半透明，但 PMX 里 diffuse alpha 仍是 1。超过 1% 的像素带透明就
         // 认为需要走透明 pass，避免低 alpha 像素的黑色 RGB 被不透明画出。
         std::size_t transparent = 0;
+        std::size_t soft_alpha = 0;
         const std::size_t pixel_count =
             static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
 
@@ -1801,6 +1802,7 @@ SceneRenderer::Texture SceneRenderer::make_texture(const unsigned char* pixels, 
             for (int x = 0; x < w; ++x) {
                 const unsigned char a = row[x * 4 + 3];
                 if (a < 250) ++transparent;
+                if (a > 8 && a < 247) ++soft_alpha;
                 const std::size_t gi = static_cast<std::size_t>(gy) * kGrid +
                                        static_cast<std::size_t>(grid_x[static_cast<std::size_t>(x)]);
                 alpha_sum[gi] += a;
@@ -1812,6 +1814,7 @@ SceneRenderer::Texture SceneRenderer::make_texture(const unsigned char* pixels, 
                 tex.alpha_grid[i] = static_cast<unsigned char>(alpha_sum[i] / alpha_count[i]);
         }
         tex.has_alpha = transparent * 100 > pixel_count;
+        tex.has_soft_alpha = soft_alpha * 200 > pixel_count;
     }
     tex.width = w;
     tex.height = h;
@@ -1843,7 +1846,7 @@ SceneRenderer::Texture SceneRenderer::make_texture(const unsigned char* pixels, 
 
 bool SceneRenderer::range_uses_alpha(const Model& model, const MaterialRange& range,
                                      const Texture& tex) const {
-    if (!tex.has_alpha) return false;
+    if (!tex.has_alpha || !tex.has_soft_alpha) return false;
     if (tex.alpha_grid.empty() || tex.alpha_grid_w <= 0 || tex.alpha_grid_h <= 0 ||
         range.count == 0)
         return tex.has_alpha;
@@ -2031,6 +2034,7 @@ void SceneRenderer::bind_material(const Model& model, const Material& mt,
     glBindTexture(glc::GL_TEXTURE_2D, tex.valid ? tex.id : 0);
     mesh_program_.set1i("uTex", 0);
     mesh_program_.set1i("uUseTex", tex.valid ? 1 : 0);
+    mesh_program_.set1i("uAlphaCutout", tex.has_alpha && !tex.has_soft_alpha ? 1 : 0);
 
     Texture& sph = texture_for(model, mt.sphere);
     glActiveTexture(glc::GL_TEXTURE0 + 1);

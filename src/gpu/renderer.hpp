@@ -227,6 +227,7 @@ private:
         // diffuse alpha 往往仍是 1，只看材质 alpha 会把它当不透明：低 alpha
         // 像素的黑色 RGB 被原样画出，表现为黑点、黑边。
         bool has_alpha = false;
+        bool has_soft_alpha = false;
         // 按 UV 判断材质透明度用的 alpha 缩略图（128×128，值越大越不透明）。
         // 整张贴图有透明像素不代表某个材质需要混合：图集边缘的抗锯齿、别的
         // UV 岛上的镂空都会误导分类。

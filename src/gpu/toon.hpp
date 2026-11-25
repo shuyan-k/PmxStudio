@@ -34,6 +34,7 @@ in vec2 vUV;
 in vec3 vWorld;
 out vec4 fragColor;
 uniform sampler2D uTex;
+uniform int uAlphaCutout;
 uniform sampler2D uSphereTex;
 uniform sampler2D uToonTex;
 uniform int uUseTex;
@@ -113,7 +114,12 @@ vec3 material_ext_normal(vec3 n) {
 }
 void main() {
     vec4 tex = uUseTex == 1 ? texture(uTex, vUV) : vec4(1.0);
-    if (tex.a < 0.02) discard;
+    if (uAlphaCutout == 1) {
+        if (tex.a < 0.5) discard;
+        tex.a = 1.0;
+    } else if (tex.a < 0.02) {
+        discard;
+    }
     vec4 base = vec4(tex.rgb * uDiffuse.rgb * uModelBrightness, tex.a * uDiffuse.a);
     vec3 ng = normalize(vN);
     if (!gl_FrontFacing) ng = -ng;
