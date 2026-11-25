@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 # CMake 4 默认拒绝 cmake_minimum_required < 3.5 的第三方工程，GLFW 3.4 仍使用旧式声明。
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
 
-project(PmxStudio VERSION 1.1.2 LANGUAGES C CXX)
+project(PmxStudio VERSION 2.0.0 LANGUAGES C CXX)
 
 # ctest 入口：各组测试都用绝对路径引用 tests/ 下的样例模型，无需固定工作目录。
 enable_testing()

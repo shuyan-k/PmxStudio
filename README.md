@@ -9,7 +9,7 @@
   <a href="https://github.com/shuyan-k/PmxStudio/releases/latest"><img src="https://img.shields.io/github/v/release/shuyan-k/PmxStudio" alt="release"></a>
 </p>
 
-当前版本 **v1.1.2**，发布说明见 [docs/releases/v1.1.2.md](docs/releases/v1.1.2.md)。
+当前版本 **v2.0.0**，发布说明见 [docs/releases/v2.0.0.md](docs/releases/v2.0.0.md)。
 
 PMX（MikuMikuDance 模型格式）查看、编辑与出片工具的原生 C++ 实现：C++20 + GLFW 3.4 + Dear ImGui + OpenGL 4.6 + Bullet 3.25。不依赖 Python / PyQt5，Windows 下产物为单文件 exe；第三方源码全部随仓库提供，克隆后**断网也能构建**。
 
@@ -212,8 +212,8 @@ client.close()
 
 | 类型 | 键 |
 | --- | --- |
-| 布尔 | `show_mesh` `show_bones` `show_rigid` `show_joints` `use_gpu` `wireframe` `grid` `outline` `preview_alpha` `show_light` `camera_gizmo` `ground` `physics_enabled` `bg_follow_theme` `grid_follow_theme` |
-| 数值 | `bone_alpha` `rigid_alpha` `joint_alpha` `toon` `rim` `toon_edge` `light_intensity` `bg_brightness` `model_brightness` `gravity` `iterations` |
+| 布尔 | `show_mesh` `show_bones` `show_rigid` `show_joints` `use_gpu` `wireframe` `grid` `outline` `preview_alpha` `show_light` `camera_gizmo` `ground` `physics_enabled` `bg_follow_theme` `grid_follow_theme` `material_ext` `normal_auto` |
+| 数值 | `bone_alpha` `rigid_alpha` `joint_alpha` `toon` `rim` `toon_edge` `light_intensity` `bg_brightness` `model_brightness` `gravity` `iterations` `normal_strength` |
 | 三维向量 | `background` `light_dir` `light_color` `ambient_color` `grid_minor` `grid_major` `grid_axis_x` `grid_axis_z` |
 
 #### 动作、骨骼、形态、材质
@@ -513,7 +513,7 @@ Agent API 与插件加载只使用系统 socket / `dlopen` / `LoadLibrary`，不
 
 ## 测试
 
-`pmx_tests` 共 280 项检查，不创建窗口；另有三组模块测试（`pmx_tests_anim`、`pmx_tests_bake`、`pmx_tests_script`）：
+`pmx_tests` 共 307 项检查，不创建窗口；另有五组模块测试（`pmx_tests_camera`、`pmx_tests_anim`、`pmx_tests_bake`、`pmx_tests_script`、`pmx_tests_model_transform`）：
 
 ```powershell
 build\Release\pmx_tests.exe      # Windows
@@ -536,6 +536,8 @@ ctest --test-dir build           # 或一次跑全部
 8. 烘焙（`bake`）：固定步长重放的逐位一致、刚体骨骼写出、预热与范围裁剪。
 9. 脚本（`script`）：JSON 解析（含 `\u` 代理对）、批量改名 / 刚体参数、错误信息。
 10. 骨骼分类：日 / 中 / 英关键词识别、优先级（袖优先四肢、耳环优先体干）、英文大小写、手动覆盖与分类可见性掩码。
+11. 相机（`camera`）：左手系视图约定，正视图下世界 +X 在画面右侧，避免与 MMD 左右镜像。
+12. 多模型摆放（`model_transform`）：缩放 / 绕 Y 轴旋转 / 平移是否正确作用到网格、骨骼与物理数据。
 
 Agent API 与插件的手工验收方式：用 Xvfb 或无头桌面启动 `pmxstudio --api`，按「Python 客户端示例」发请求；`plugin.list` 应列出已加载插件，`scene.render` 生成的 PNG 可直接检查。
 
